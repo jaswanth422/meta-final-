@@ -1,0 +1,16 @@
+name: context-breach-env
+version: 0.1.0
+description: Multi-agent trust-boundary environment for prompt-injection contagion and scalable oversight.
+author: Context Breach Team
+license: MIT
+python_version: "3.11"
+entrypoint: context_breach_env.server.app:app
+variables:
+  CONTEXT_BREACH_MAX_STEPS: "12"
+tags:
+  - openenv
+  - multi-agent
+  - prompt-injection
+  - scalable-oversight
+  - enterprise-workflows
+

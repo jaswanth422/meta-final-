@@ -1,0 +1,36 @@
+[project]
+name = "context-breach-env"
+version = "0.1.0"
+description = "OpenEnv prototype for multi-agent prompt-injection contagion and scalable oversight."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core",
+    "pydantic>=2",
+    "fastapi",
+    "uvicorn",
+]
+
+[project.scripts]
+server = "context_breach_env.server.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+training = [
+    "trl>=0.25.0",
+    "transformers",
+    "datasets",
+    "accelerate",
+    "peft",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+include = ["context_breach_env*"]
+exclude = ["space*", "server*", "results*", "notebooks*", "scripts*", "tests*", "outputs*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
