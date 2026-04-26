@@ -12,7 +12,6 @@
 
 ---
 
-## 30-Second Pitch
 
 | Policy | CSI (0–100) | Leakage | Contamination | Real-world attack the policy fails on |
 |---|---|---|---|---|
