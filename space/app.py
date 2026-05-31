@@ -28,17 +28,24 @@ from scripts.evaluate_baseline import (
 )
 
 
-TRAINED_EVAL_PATH = ROOT / "trained_eval.json"
+TRAINED_EVAL_CANDIDATES = (
+    ROOT / "trained_eval.json",
+    ROOT.parent / "results" / "trained_eval.json",
+)
 _trained_cache: dict[str, dict[str, Any]] = {}
-if TRAINED_EVAL_PATH.exists():
-    data = json.loads(TRAINED_EVAL_PATH.read_text())
-    for ep in data.get("episodes", []):
-        sid = ep.get("scenario_id")
-        if sid and sid not in _trained_cache:
-            _trained_cache[sid] = ep
-    print(f"Loaded {len(_trained_cache)} cached trained-model traces from {TRAINED_EVAL_PATH}")
-else:
-    print(f"WARNING: {TRAINED_EVAL_PATH} not found. Trained policy unavailable.")
+_trained_eval_source: Path | None = None
+for candidate in TRAINED_EVAL_CANDIDATES:
+    if candidate.exists():
+        _trained_eval_source = candidate
+        data = json.loads(candidate.read_text())
+        for ep in data.get("episodes", []):
+            sid = ep.get("scenario_id")
+            if sid and sid not in _trained_cache:
+                _trained_cache[sid] = ep
+        print(f"Loaded {len(_trained_cache)} cached trained-model traces from {candidate}")
+        break
+if _trained_eval_source is None:
+    print("WARNING: no trained_eval.json found. Trained policy unavailable.")
 
 
 REAL_WORLD_ATTACKS_PATH = ROOT / "real_world_attacks.json"
@@ -129,14 +136,6 @@ def run_baseline(scenario_idx: int, policy_name: str) -> dict[str, Any]:
     }
 
 
-# Verbatim real-world scenarios → which paraphrased training scenario they share the attack pattern with
-VERBATIM_TO_TRAINING_SCENARIO = {
-    "bing_sydney_verbatim": "incident_hidden_log",
-    "chevy_tahoe_verbatim": "support_refund_direct",
-    "appomni_verbatim": "approval_social_contamination",
-}
-
-
 def run_trained(scenario_idx: int) -> dict[str, Any]:
     scenario = SCENARIOS[scenario_idx % len(SCENARIOS)]
     ep = _trained_cache.get(scenario.id)
@@ -155,19 +154,6 @@ def run_trained(scenario_idx: int) -> dict[str, Any]:
             "source": "cached eval (real GRPO checkpoint rollout)",
         }
 
-    # Verbatim scenarios: fall back to guarded policy as expected containment pattern
-    sibling_id = VERBATIM_TO_TRAINING_SCENARIO.get(scenario.id)
-    if sibling_id is not None:
-        sibling_idx = next(i for i, s in enumerate(SCENARIOS) if s.id == sibling_id)
-        guarded_run = run_baseline(scenario_idx, "guarded")
-        guarded_run["source"] = (
-            f"⚠️ Generalization test — the trained checkpoint has NOT yet been re-evaluated on this "
-            f"verbatim variant. The trace below shows the **guarded baseline's** containment of the "
-            f"verbatim attack as the expected pattern. The trained model's actual behavior on the "
-            f"paraphrased equivalent (`{sibling_id}`) is in that scenario's cached trace."
-        )
-        return guarded_run
-
     return {
         "scenario": scenario.id,
         "workflow": scenario.workflow,
@@ -179,7 +165,10 @@ def run_trained(scenario_idx: int) -> dict[str, Any]:
         "turns": 0,
         "done": False,
         "trace": [],
-        "source": "cached (missing)",
+        "source": (
+            "trained trace unavailable for this scenario. Run scripts/eval_trained_model.py "
+            "and place the generated results/trained_eval.json in results/ or space/."
+        ),
     }
 
 

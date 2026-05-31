@@ -79,7 +79,7 @@ After 80 GRPO steps (≈ 5h 25m on free Kaggle T4):
 
 The remaining gap to the hand-coded ceiling (the 20 CSI points the trained model doesn't yet capture) is pure task-selection capability — the model learned **safety before capability**, which is the right priority order for security-sensitive systems and exactly what longer training closes.
 
-**Generalization test (held out at training time):** the env contains **3 verbatim real-world scenarios** — Liu's exact Bing/Sydney prompt, Bakke's exact Chevy/Tahoe exchange, and the AppOmni multi-agent pattern — that the trained model never saw. The Space's live trace shows full containment on all three.
+**Generalization test set (held out at training time):** the env contains **3 verbatim real-world scenarios** — Liu's exact Bing/Sydney prompt, Bakke's exact Chevy/Tahoe exchange, and the AppOmni multi-agent pattern — that the trained model never saw. The repo includes these scenarios directly; before making held-out containment claims in the demo, re-run `scripts/eval_trained_model.py` so trained traces are generated for those variants.
 
 ---
 
@@ -148,7 +148,8 @@ python scripts/eval_trained_model.py --checkpoint outputs/context-breach-grpo/ch
 python scripts/generate_after_results.py
 ```
 
-Full Kaggle notebook lives at [`notebooks/context_breach_trl_kaggle.ipynb`](notebooks/context_breach_trl_kaggle.ipynb).
+The tracked Kaggle notebook in this repo lives at [`notebooks/meta-final.ipynb`](notebooks/meta-final.ipynb).
+`scripts/eval_trained_model.py` writes `results/trained_eval.json`; the local Space reads that file automatically, and standalone Space deployments can also place a copy at `space/trained_eval.json`.
 
 ---
 
