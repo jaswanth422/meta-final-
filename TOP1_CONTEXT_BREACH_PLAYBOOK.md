@@ -1,5 +1,9 @@
 # Context Breach Top 1 Playbook
 
+> **Archive:** This was the internal Meta hackathon planning document. It is not
+> current architecture, implementation status, or evaluation evidence. See
+> `README.md` and `docs/PRODUCTION_ARCHITECTURE.md` for the maintained project.
+
 ## Decision
 
 Pick this idea and commit to it:

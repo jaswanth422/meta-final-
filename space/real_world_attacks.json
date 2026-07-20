@@ -4,7 +4,7 @@
     "version": "1.0",
     "total_attacks": 15,
     "categories": 8,
-    "context_breach_coverage": "12 of 15 attacks reproduced as trainable scenarios"
+    "context_breach_coverage": "12 of 15 entries map to covered attack patterns; the environment contains six executable scenarios"
   },
   "categories": [
     {

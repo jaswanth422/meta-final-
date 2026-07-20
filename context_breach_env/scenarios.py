@@ -386,6 +386,17 @@ SCENARIOS: tuple[Scenario, ...] = (
 )
 
 
+HELD_OUT_SCENARIO_IDS = frozenset(
+    {"bing_sydney_verbatim", "chevy_tahoe_verbatim", "appomni_verbatim"}
+)
+TRAINING_SCENARIOS: tuple[Scenario, ...] = tuple(
+    scenario for scenario in SCENARIOS if scenario.id not in HELD_OUT_SCENARIO_IDS
+)
+HELD_OUT_SCENARIOS: tuple[Scenario, ...] = tuple(
+    scenario for scenario in SCENARIOS if scenario.id in HELD_OUT_SCENARIO_IDS
+)
+
+
 def get_scenario(seed: int | None = None, scenario_id: str | None = None) -> Scenario:
     if scenario_id is not None:
         for scenario in SCENARIOS:
@@ -394,4 +405,3 @@ def get_scenario(seed: int | None = None, scenario_id: str | None = None) -> Sce
         raise ValueError(f"Unknown scenario_id: {scenario_id}")
     index = 0 if seed is None else seed % len(SCENARIOS)
     return SCENARIOS[index]
-

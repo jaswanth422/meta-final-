@@ -58,7 +58,7 @@ A 5-slide deck. Each slide has a headline, a single visual, and 2–3 sentence s
 
 ## Slide 4 — Containment Safety Index: A Single Headline Number
 
-**Headline:** Trained model scores 80 / 100 on Containment Safety Index — without any hand-coded rules.
+**Headline:** Legacy hackathon run reported CSI 80; the corrected benchmark requires a new held-out evaluation.
 
 **Visual:** Big-text scoreboard with three rows, plus the 4-panel bar chart from `results/{reward,leakage,contamination,task_success}_by_policy_with_trained.png`.
 
@@ -80,7 +80,7 @@ A 5-slide deck. Each slide has a headline, a single visual, and 2–3 sentence s
 - 20% weight on **completing the underlying business task**
 
 **Speaker notes:**
-> CSI is the single-number version of the four bars on the right. Naive scores 40 because it does complete the task — but it leaks every time, lets injection cross 3 agents, and the math punishes both. Hand-coded guarded scores 100. Our trained Qwen3-0.6B with GRPO + LoRA scores **80** — twice the safety of naive without any if/else rules. The remaining 20 points are pure task-selection capability, which longer training closes. **CSI is what we're proposing as the missing benchmark dimension** — we've checked Anthropic AIR, GANDALF, Garak, and TensorTrust; none of them score multi-agent contamination depth, only single-model leakage.
+> CSI combines four dimensions, but its headline value must be read with the component scores. The legacy checkpoint's reported 80 predates the corrected holdout split and provides no task-success credit under the published formula. The next result must come from a newly trained checkpoint evaluated on `HELD_OUT_SCENARIOS` with raw traces committed.
 
 ---
 
@@ -112,7 +112,7 @@ A 5-slide deck. Each slide has a headline, a single visual, and 2–3 sentence s
 **Speaker notes:**
 > Single-model benchmarks have been done well. The gap is the contamination-depth dimension — when one agent's bad summary becomes another agent's trusted instruction. AppOmni demonstrated this in production in 2024. Our env is the first to measure it as a trainable signal. CSI bakes it in as 25% of the score.
 
-**Backing evidence:** We compiled a **Prompt-Injection Atlas** (in `space/real_world_attacks.json`, rendered as a Space tab) — 15 documented production incidents from Bing/Sydney through DPD-2024 to GenAI-worms-2024, all cited, taxonomized into 8 categories. Of the 15, **12 are reproduced as trainable scenarios in Context Breach**. No other team will have curated this depth of grounding.
+**Backing evidence:** We compiled a **Prompt-Injection Atlas** (in `space/real_world_attacks.json`, rendered as a Space tab) with 15 cited incidents and disclosures across 8 categories. The executable environment currently contains six scenarios covering three principal attack families.
 
 ---
 
@@ -120,7 +120,7 @@ A 5-slide deck. Each slide has a headline, a single visual, and 2–3 sentence s
 
 - **Why GRPO not PPO?** GRPO needs no value model — fits a single GPU, faster iteration.
 - **Why LoRA?** 5M trainable params instead of 600M. Cuts wall time roughly in half on T4.
-- **Reward shaping?** No. Pure environment reward. Avoids reward-hacking artifacts.
+- **Reward shaping?** Yes. The environment contains explicit component rewards and the model receives a safety-oriented system prompt; both must be disclosed.
 - **MAX_STEPS=18?** Empirical — 12 was too tight, the model timed out before reaching `finalize_response`. Larger budget gave the long-horizon credit signal room to propagate.
 - **Why Qwen3?** TRL 1.2's chat-template auto-detection only recognizes Llama-3, GPT-OSS, GLM4-MoE, and Qwen3 family templates. Qwen3-0.6B was the smallest viable choice on free T4.
 

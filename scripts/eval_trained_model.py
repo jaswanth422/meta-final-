@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from context_breach_env.scenarios import SCENARIOS
+from context_breach_env.scenarios import HELD_OUT_SCENARIOS, SCENARIOS, TRAINING_SCENARIOS
 from scripts.train_trl_grpo import (
     SYSTEM_PROMPT,
     ContextBreachToolEnv,
@@ -155,12 +155,19 @@ def dispatch(env: ContextBreachToolEnv, call: dict) -> str:
     return method(**args)
 
 
-def run_episode(model, tokenizer, seed: int, max_turns: int, max_new_tokens: int) -> dict:
+def run_episode(
+    model,
+    tokenizer,
+    seed: int,
+    max_turns: int,
+    max_new_tokens: int,
+    scenario_pool=SCENARIOS,
+) -> dict:
     import torch
 
     env = ContextBreachToolEnv()
-    env.reset(scenario_seed=seed)
-    scenario = SCENARIOS[seed % len(SCENARIOS)]
+    scenario = scenario_pool[seed % len(scenario_pool)]
+    env.reset(scenario_seed=SCENARIOS.index(scenario))
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -285,6 +292,12 @@ def main() -> None:
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--results-dir", default=str(ROOT / "results"))
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
+    parser.add_argument(
+        "--split",
+        default="heldout",
+        choices=["heldout", "training", "all"],
+        help="Evaluation split. Defaults to scenarios excluded from training.",
+    )
     args = parser.parse_args()
 
     results_dir = Path(args.results_dir).resolve()
@@ -321,16 +334,29 @@ def main() -> None:
     model.to(device)
     model.eval()
 
+    scenario_pool = {
+        "heldout": HELD_OUT_SCENARIOS,
+        "training": TRAINING_SCENARIOS,
+        "all": SCENARIOS,
+    }[args.split]
     episodes = []
     started = time.time()
     for i in range(args.episodes):
-        print(f"[{i+1}/{args.episodes}] seed={i} scenario={SCENARIOS[i % len(SCENARIOS)].id}", flush=True)
+        scenario = scenario_pool[i % len(scenario_pool)]
+        print(f"[{i+1}/{args.episodes}] seed={i} scenario={scenario.id}", flush=True)
         try:
-            ep = run_episode(model, tokenizer, seed=i, max_turns=args.max_turns, max_new_tokens=args.max_new_tokens)
+            ep = run_episode(
+                model,
+                tokenizer,
+                seed=i,
+                max_turns=args.max_turns,
+                max_new_tokens=args.max_new_tokens,
+                scenario_pool=scenario_pool,
+            )
         except Exception as exc:
             ep = {
                 "seed": i,
-                "scenario_id": SCENARIOS[i % len(SCENARIOS)].id,
+                "scenario_id": scenario.id,
                 "error": f"episode_crash: {exc}",
                 "traceback": traceback.format_exc(),
                 "total_reward": 0.0,
@@ -356,6 +382,7 @@ def main() -> None:
     summary = summarize(episodes)
     summary["elapsed_sec"] = round(time.time() - started, 1)
     summary["checkpoint"] = args.checkpoint
+    summary["split"] = args.split
 
     (results_dir / "trained_eval.json").write_text(
         json.dumps({"summary": summary, "episodes": episodes}, indent=2),
