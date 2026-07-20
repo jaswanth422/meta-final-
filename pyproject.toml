@@ -1,7 +1,7 @@
 [project]
 name = "context-breach-env"
-version = "0.1.0"
-description = "OpenEnv prototype for multi-agent prompt-injection contagion and scalable oversight."
+version = "0.2.0"
+description = "OpenEnv prompt-injection simulator with an enforce-before-execute production security layer."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from context_breach_env.models import ContextBreachAction, ContextBreachObservation
-from context_breach_env.scenarios import SCENARIOS
+from context_breach_env.scenarios import SCENARIOS, TRAINING_SCENARIOS
 from context_breach_env.server.context_breach_environment import ContextBreachEnvironment
 
 
@@ -250,6 +250,13 @@ def build_grpo_config(config_cls: type, args: argparse.Namespace) -> Any:
     return config_cls(**filtered)
 
 
+def training_scenario_indices(num_episodes: int) -> list[int]:
+    return [
+        SCENARIOS.index(TRAINING_SCENARIOS[index % len(TRAINING_SCENARIOS)])
+        for index in range(num_episodes)
+    ]
+
+
 def make_dataset(num_episodes: int) -> Any:
     try:
         from datasets import Dataset
@@ -260,8 +267,8 @@ def make_dataset(num_episodes: int) -> Any:
 
     prompts = []
     seeds = []
-    for index in range(num_episodes):
-        scenario = SCENARIOS[index % len(SCENARIOS)]
+    for scenario_index in training_scenario_indices(num_episodes):
+        scenario = SCENARIOS[scenario_index]
         prompts.append(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -275,7 +282,7 @@ def make_dataset(num_episodes: int) -> Any:
                 },
             ]
         )
-        seeds.append(index)
+        seeds.append(scenario_index)
     return Dataset.from_dict({"prompt": prompts, "scenario_seed": seeds})
 
 
