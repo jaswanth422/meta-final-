@@ -57,7 +57,7 @@ if torch.cuda.is_available():
 PY
 
 if [ "${SMOKE:-0}" = "1" ]; then
-  MODEL="${MODEL:-Qwen/Qwen3-1.7B}"
+  MODEL="${MODEL:-Qwen/Qwen3-0.6B}"
   EPISODES="${EPISODES:-4}"
   MAX_STEPS="${MAX_STEPS:-1}"
   NUM_GEN="${NUM_GEN:-2}"
@@ -67,7 +67,7 @@ if [ "${SMOKE:-0}" = "1" ]; then
   OUTPUT_DIR="/tmp/smoke"
   SKIP_UPLOAD=1
 else
-  MODEL="${MODEL:-Qwen/Qwen3-1.7B}"
+  MODEL="${MODEL:-Qwen/Qwen3-0.6B}"
   EPISODES="${EPISODES:-80}"
   MAX_STEPS="${MAX_STEPS:-80}"
   NUM_GEN="${NUM_GEN:-4}"
@@ -90,6 +90,8 @@ python scripts/train_trl_grpo.py \
   --gradient-accumulation-steps "$GRAD_ACCUM" \
   --max-completion-length "$MAX_COMPLETION" \
   --learning-rate "$LR" \
+  --save-steps 10 \
+  --use-lora \
   --output-dir "$OUTPUT_DIR" 2>&1 | tee /tmp/work/results/training.log
 
 if [ "${SMOKE:-0}" = "1" ]; then
