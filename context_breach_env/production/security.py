@@ -45,6 +45,14 @@ class HMACSigner:
         return signed.model_copy(update={"signature": signature})
 
     def verify(self, envelope: ArtifactEnvelope) -> bool:
+        # The signature authenticates the stored content hash, so verification
+        # must also bind that hash to the content currently in the envelope.
+        # Otherwise an attacker could replace ``content`` while retaining the
+        # original signed ``content_hash`` and signature.
+        if not hmac.compare_digest(sha256_content(envelope.content), envelope.content_hash):
+            return False
+        if envelope.key_id != self.key_id:
+            return False
         unsigned = envelope.model_copy(update={"signature": ""})
         expected = hmac.new(
             self._secret,

@@ -50,3 +50,8 @@ def test_training_prompt_requests_concise_terminal_action() -> None:
 def test_save_steps_is_configurable() -> None:
     args = parse_args(["--save-steps", "5"])
     assert args.save_steps == 5
+
+
+def test_default_model_matches_documented_wedge() -> None:
+    args = parse_args([])
+    assert args.model == "Qwen/Qwen3-0.6B"

@@ -417,7 +417,7 @@ def train(args: argparse.Namespace) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TRL GRPO training for Context Breach.")
     parser.add_argument("--dry-run", action="store_true", help="Run one manual tool episode.")
-    parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
+    parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
     parser.add_argument("--episodes", type=int, default=60)
     parser.add_argument("--max-steps", type=int, default=30)
     parser.add_argument(

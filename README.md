@@ -174,6 +174,27 @@ python scripts/generate_after_results.py
 The tracked Kaggle notebook in this repo lives at [`notebooks/meta-final.ipynb`](notebooks/meta-final.ipynb).
 `scripts/eval_trained_model.py` writes `results/trained_eval.json`; the local Space reads that file automatically, and standalone Space deployments can also place a copy at `space/trained_eval.json`.
 
+## Competitive benchmark gate
+
+Do not treat the six simulator scenarios as detector evidence. Normalize an
+external frozen dataset such as PINT into the JSONL contract documented in
+[`benchmarks/README.md`](benchmarks/README.md), then measure a detector with:
+
+```bash
+python scripts/benchmark_detectors.py \
+  --dataset /data/pint-normalized.jsonl \
+  --backend qwen \
+  --model /models/context-breach-qwen3-0.6b \
+  --device cuda --offline --repeats 10 \
+  --output results/qwen-pint.json
+```
+
+The report includes the dataset hash, confusion matrix, precision, recall, F1,
+false-positive and false-negative rates, measured p50/p95/p99 latency, and
+sequential throughput. Competitive claims require a frozen external benchmark,
+benign hard negatives, an LLM Guard baseline, and repeated hardware-specific
+measurements; the included two-case smoke file is only a harness sanity check.
+
 ---
 
 ## Repository Layout

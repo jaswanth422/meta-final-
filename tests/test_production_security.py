@@ -49,6 +49,8 @@ def test_ingestion_signs_artifact_and_detects_tampering() -> None:
     )
     assert runtime.signer.verify(envelope)
     assert not runtime.signer.verify(envelope.model_copy(update={"content_hash": "tampered"}))
+    assert not runtime.signer.verify(envelope.model_copy(update={"content": "tampered"}))
+    assert not runtime.signer.verify(envelope.model_copy(update={"key_id": "unknown-key"}))
 
 
 def test_duplicate_ingestion_is_quarantined() -> None:
