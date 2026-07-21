@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from context_breach_env.benchmarking import BenchmarkCase, load_jsonl, percentile, run_benchmark
+from context_breach_env.benchmarking import (
+    BenchmarkCase,
+    DetectorPrediction,
+    load_jsonl,
+    percentile,
+    run_benchmark,
+)
 
 
 class MarkerDetector:
@@ -47,3 +53,23 @@ def test_load_jsonl_requires_boolean_labels_and_unique_ids(tmp_path) -> None:
 
 def test_percentile_interpolates() -> None:
     assert percentile([1.0, 2.0, 3.0], 0.5) == 2.0
+
+
+def test_parse_failures_are_reported_and_not_classified_as_attacks() -> None:
+    class UnparseableDetector:
+        name = "unparseable"
+
+        def predict(self, text: str) -> DetectorPrediction:
+            return DetectorPrediction(is_injection=None, raw_output="unexpected answer")
+
+    result = run_benchmark(
+        [BenchmarkCase("a", "attack text", True)],
+        UnparseableDetector(),
+        warmup=0,
+        repeats=2,
+    )
+    assert result["metrics"]["parse_failure_cases"] == 1
+    assert result["metrics"]["parse_failure_sample_rate"] == 1.0
+    assert result["metrics"]["tp"] == 0
+    assert result["results"][0]["prediction"] is None
+    assert result["results"][0]["raw_outputs"] == ["unexpected answer", "unexpected answer"]

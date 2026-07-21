@@ -23,10 +23,17 @@ class BenchmarkCase:
     source: str = "unknown"
 
 
+@dataclass(frozen=True)
+class DetectorPrediction:
+    is_injection: bool | None
+    raw_output: str | None = None
+    score: float | None = None
+
+
 class Detector(Protocol):
     name: str
 
-    def predict(self, text: str) -> bool: ...
+    def predict(self, text: str) -> bool | DetectorPrediction: ...
 
 
 class HeuristicDetector:
@@ -39,11 +46,15 @@ class HeuristicDetector:
         self.static = StaticInjectionScanner()
         self.semantic = SemanticHeuristicScanner()
 
-    def predict(self, text: str) -> bool:
+    def predict(self, text: str) -> DetectorPrediction:
         static = self.static.scan(text)
         semantic = self.semantic.scan(text)
         score = 0.4 * static.score + 0.6 * semantic.score
-        return score >= self.threshold
+        return DetectorPrediction(
+            is_injection=score >= self.threshold,
+            raw_output=f"risk_score={score:.6f}",
+            score=score,
+        )
 
 
 def load_jsonl(path: Path) -> list[BenchmarkCase]:
@@ -94,6 +105,12 @@ def _safe_ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
+def _normalize_prediction(value: bool | DetectorPrediction) -> DetectorPrediction:
+    if isinstance(value, DetectorPrediction):
+        return value
+    return DetectorPrediction(is_injection=bool(value))
+
+
 def run_benchmark(
     cases: Sequence[BenchmarkCase],
     detector: Detector,
@@ -112,30 +129,39 @@ def run_benchmark(
         detector.predict(cases[0].text)
 
     latencies_ms: list[float] = []
-    predictions: list[bool] = []
+    predictions: list[bool | None] = []
     case_results: list[dict[str, object]] = []
     for case in cases:
-        repeated_predictions: list[bool] = []
+        repeated_predictions: list[DetectorPrediction] = []
         for _ in range(repeats):
             started = timer()
-            prediction = bool(detector.predict(case.text))
+            prediction = _normalize_prediction(detector.predict(case.text))
             elapsed_ms = (timer() - started) * 1000.0
             latencies_ms.append(elapsed_ms)
             repeated_predictions.append(prediction)
-        prediction = sum(repeated_predictions) >= math.ceil(repeats / 2)
+        parsed = [prediction.is_injection for prediction in repeated_predictions if prediction.is_injection is not None]
+        prediction = None if not parsed else sum(parsed) >= math.ceil(len(parsed) / 2)
         predictions.append(prediction)
         case_results.append(
             {
                 **asdict(case),
                 "prediction": prediction,
-                "correct": prediction == case.is_injection,
+                "correct": prediction is not None and prediction == case.is_injection,
+                "parse_failures": sum(item.is_injection is None for item in repeated_predictions),
+                "raw_outputs": [item.raw_output for item in repeated_predictions],
+                "scores": [item.score for item in repeated_predictions],
             }
         )
 
-    tp = sum(prediction and case.is_injection for case, prediction in zip(cases, predictions))
-    tn = sum(not prediction and not case.is_injection for case, prediction in zip(cases, predictions))
-    fp = sum(prediction and not case.is_injection for case, prediction in zip(cases, predictions))
-    fn = sum(not prediction and case.is_injection for case, prediction in zip(cases, predictions))
+    tp = sum(prediction is True and case.is_injection for case, prediction in zip(cases, predictions))
+    tn = sum(prediction is False and not case.is_injection for case, prediction in zip(cases, predictions))
+    fp = sum(prediction is True and not case.is_injection for case, prediction in zip(cases, predictions))
+    fn = sum(prediction is False and case.is_injection for case, prediction in zip(cases, predictions))
+    parse_failure_cases = sum(prediction is None for prediction in predictions)
+    parse_failure_samples = sum(
+        int(result["parse_failures"])
+        for result in case_results
+    )
     precision = _safe_ratio(tp, tp + fp)
     recall = _safe_ratio(tp, tp + fn)
     elapsed_total_s = sum(latencies_ms) / 1000.0
@@ -152,6 +178,10 @@ def run_benchmark(
             "f1": _safe_ratio(2 * precision * recall, precision + recall),
             "false_positive_rate": _safe_ratio(fp, fp + tn),
             "false_negative_rate": _safe_ratio(fn, fn + tp),
+            "parse_failure_case_rate": _safe_ratio(parse_failure_cases, len(cases)),
+            "parse_failure_sample_rate": _safe_ratio(parse_failure_samples, len(cases) * repeats),
+            "evaluated_cases": len(cases) - parse_failure_cases,
+            "parse_failure_cases": parse_failure_cases,
             "tp": tp,
             "tn": tn,
             "fp": fp,
