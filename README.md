@@ -128,7 +128,7 @@ planned components.
 
 ---
 
-## Reproduce in 6 hours on a Free Kaggle T4
+## Reproduce on a Free Kaggle T4
 
 ```bash
 # 1. Install
@@ -142,17 +142,30 @@ python -m pytest
 python scripts/evaluate_baseline.py --policy naive --episodes 3
 python scripts/evaluate_baseline.py --policy guarded --episodes 3
 
-# 3. Train (Kaggle T4 — ~5h 25m)
+# 3. Validate reward behavior with a short run before committing GPU time
 python scripts/train_trl_grpo.py \
   --device cuda \
   --model Qwen/Qwen3-0.6B \
-  --episodes 80 --max-steps 80 \
+  --episodes 30 --max-steps 10 --save-steps 5 \
   --num-generations 4 --gradient-accumulation-steps 4 \
-  --max-completion-length 2048 --learning-rate 1e-4 \
+  --max-completion-length 1024 --learning-rate 5e-5 \
+  --use-lora \
+  --output-dir outputs/reward-fix-smoke
+
+# 4. Evaluate the smoke checkpoint before starting a longer run
+python scripts/eval_trained_model.py --checkpoint outputs/reward-fix-smoke/checkpoint-10 --episodes 9 --split heldout
+
+# 5. After the smoke run demonstrates finalized episodes, run the longer job
+python scripts/train_trl_grpo.py \
+  --device cuda \
+  --model Qwen/Qwen3-0.6B \
+  --episodes 80 --max-steps 80 --save-steps 10 \
+  --num-generations 4 --gradient-accumulation-steps 4 \
+  --max-completion-length 1024 --learning-rate 5e-5 \
   --use-lora \
   --output-dir outputs/context-breach-grpo
 
-# 4. Evaluate, plot, generate before/after report
+# 6. Evaluate, plot, and generate the before/after report
 python scripts/plot_training_curves.py --output-dir outputs/context-breach-grpo
 python scripts/eval_trained_model.py --checkpoint outputs/context-breach-grpo/checkpoint-80 --episodes 9 --split heldout
 python scripts/generate_after_results.py
