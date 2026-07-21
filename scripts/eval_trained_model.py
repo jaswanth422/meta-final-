@@ -321,7 +321,7 @@ def main() -> None:
         base_model_id = adapter_cfg.get("base_model_name_or_path", "Qwen/Qwen3-0.6B")
         print(f"Detected LoRA adapter; loading base {base_model_id} then attaching adapter", flush=True)
         from peft import PeftModel
-        base = AutoModelForCausalLM.from_pretrained(base_model_id, dtype=dtype)
+        base = AutoModelForCausalLM.from_pretrained(base_model_id, torch_dtype=dtype)
         model = PeftModel.from_pretrained(base, args.checkpoint)
         try:
             model = model.merge_and_unload()
@@ -329,7 +329,7 @@ def main() -> None:
         except Exception as exc:
             print(f"merge_and_unload failed ({exc}); using non-merged adapter", flush=True)
     else:
-        model = AutoModelForCausalLM.from_pretrained(args.checkpoint, dtype=dtype)
+        model = AutoModelForCausalLM.from_pretrained(args.checkpoint, torch_dtype=dtype)
     model.to(device)
     model.eval()
 
