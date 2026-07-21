@@ -39,3 +39,16 @@ python scripts/benchmark_detectors.py \
 The cost field is derived from measured sequential throughput and the supplied
 machine hourly price. It is not a production-capacity estimate; concurrency and
 load testing must be reported separately.
+
+For the LLM Guard comparison:
+
+```bash
+pip install llm-guard
+python scripts/benchmark_detectors.py \
+  --dataset benchmarks/smoke.jsonl \
+  --backend llm-guard --repeats 10 \
+  --output results/llm-guard-smoke.json
+```
+
+Qwen reports preserve every raw generated label and expose parse-failure rates.
+Unparseable outputs are not silently converted into positive classifications.

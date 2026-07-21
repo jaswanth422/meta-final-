@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from context_breach_env.benchmarking import HeuristicDetector, dataset_sha256, load_jsonl, run_benchmark
+from context_breach_env.benchmarking import (
+    DetectorPrediction,
+    HeuristicDetector,
+    dataset_sha256,
+    load_jsonl,
+    run_benchmark,
+)
 
 
 class QwenDetector:
@@ -39,7 +46,7 @@ class QwenDetector:
         self.device = resolved_device
         self.name = f"qwen:{model_path}"
 
-    def predict(self, text: str) -> bool:
+    def predict(self, text: str) -> DetectorPrediction:
         import torch
 
         messages = [
@@ -50,6 +57,7 @@ class QwenDetector:
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=False,
         )
         inputs = self.tokenizer(rendered, return_tensors="pt").to(self.device)
         with torch.inference_mode():
@@ -60,20 +68,41 @@ class QwenDetector:
                 pad_token_id=self.tokenizer.eos_token_id,
             )
         generated = output[0, inputs["input_ids"].shape[1] :]
-        answer = self.tokenizer.decode(generated, skip_special_tokens=True).strip().upper()
-        if answer.startswith("INJECTION"):
-            return True
-        if answer.startswith("SAFE"):
-            return False
-        # An unparseable security decision fails closed and remains visible as
-        # a false positive in the benchmark output.
-        return True
+        answer = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        label = re.search(r"\b(INJECTION|SAFE)\b", answer.upper())
+        if label is None:
+            return DetectorPrediction(is_injection=None, raw_output=answer)
+        return DetectorPrediction(
+            is_injection=label.group(1) == "INJECTION",
+            raw_output=answer,
+        )
+
+
+class LLMGuardDetector:
+    """Protect AI LLM Guard's prompt-injection scanner."""
+
+    name = "llm-guard:PromptInjection"
+
+    def __init__(self) -> None:
+        try:
+            from llm_guard.input_scanners import PromptInjection
+        except ImportError as exc:
+            raise RuntimeError("Install the comparison backend with: pip install llm-guard") from exc
+        self.scanner = PromptInjection()
+
+    def predict(self, text: str) -> DetectorPrediction:
+        _sanitized, is_valid, risk_score = self.scanner.scan(text)
+        return DetectorPrediction(
+            is_injection=not bool(is_valid),
+            raw_output=f"is_valid={bool(is_valid)} risk_score={float(risk_score):.6f}",
+            score=float(risk_score),
+        )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark containment detectors on normalized JSONL data.")
     parser.add_argument("--dataset", type=Path, required=True)
-    parser.add_argument("--backend", choices=["heuristic", "qwen"], default="heuristic")
+    parser.add_argument("--backend", choices=["heuristic", "qwen", "llm-guard"], default="heuristic")
     parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--offline", action="store_true", help="Forbid model downloads and use local files only.")
@@ -87,11 +116,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cases = load_jsonl(args.dataset)
-    detector = (
-        HeuristicDetector()
-        if args.backend == "heuristic"
-        else QwenDetector(args.model, device=args.device, offline=args.offline)
-    )
+    if args.backend == "heuristic":
+        detector = HeuristicDetector()
+    elif args.backend == "qwen":
+        detector = QwenDetector(args.model, device=args.device, offline=args.offline)
+    else:
+        detector = LLMGuardDetector()
     report = run_benchmark(
         cases,
         detector,
