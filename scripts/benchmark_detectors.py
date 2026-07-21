@@ -40,7 +40,14 @@ class QwenDetector:
         load_kwargs: dict[str, Any] = {"local_files_only": offline}
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, **load_kwargs)
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, dtype=dtype, **load_kwargs)
+        # ``torch_dtype`` works across the Transformers versions supported by
+        # Qwen and LLM Guard. Newer releases alias it to ``dtype``, while older
+        # releases reject ``dtype`` as an unexpected model constructor kwarg.
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=dtype,
+            **load_kwargs,
+        )
         self.model.to(resolved_device)
         self.model.eval()
         self.device = resolved_device
