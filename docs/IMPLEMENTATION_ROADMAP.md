@@ -19,7 +19,8 @@
 - [ ] Add authenticated administration and human-review APIs.
 - [x] Add privacy-limited structured request logging, Prometheus metrics, and health checks.
 - [ ] Add distributed tracing and production exporter integration.
-- [ ] Run load, failure-recovery, and concurrent-session tests.
+- [x] Run local load, failure-recovery, replay-race, and concurrent-session tests.
+- [ ] Run sustained multi-worker and PostgreSQL deployment load/chaos tests.
 
 ## Phase 3 — Model and benchmark validation
 
