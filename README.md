@@ -219,6 +219,7 @@ rules. With no policy file configured it fails closed.
 
 ```bash
 export CONTEXT_BREACH_POLICY_FILE=config/authorization-policy.example.json
+export CONTEXT_BREACH_DATABASE_PATH=./var/gateway.sqlite3
 export CONTEXT_BREACH_HMAC_KEY_ID=local-demo-v1
 export CONTEXT_BREACH_HMAC_SECRET="$(openssl rand -hex 32)"
 export CONTEXT_BREACH_HMAC_TENANT_ID=demo-tenant
@@ -239,14 +240,20 @@ values and raw intent text.
 
 Every authorization and audit request now requires a short-lived HMAC credential
 bound to one tenant/user/agent identity. The signature covers the complete
-request, and a one-time nonce blocks replay within the running process. See the
+request, and a one-time nonce blocks replay across workers and restarts when the
+SQLite state path is configured. See the
 [gateway authentication protocol](docs/GATEWAY_AUTHENTICATION.md) for the exact
 canonical format and threat model.
 
-MVP boundary: key loading supports one environment-provided identity, while
-nonce, audit, and artifact state remain process-local memory. Durable atomic
-storage, managed key rotation, TLS, and OIDC/workload identity are still required
-before this gateway can protect real traffic.
+The [durable storage guide](docs/GATEWAY_STORAGE.md) documents the SQLite schema,
+persistent-volume requirements, backup behavior, and failure guarantees. Without
+`CONTEXT_BREACH_DATABASE_PATH`, the gateway reports and uses an in-memory
+development fallback.
+
+MVP boundary: SQLite provides single-host durability, while artifact assessments
+remain process-local. PostgreSQL for multiple hosts, managed key rotation, TLS,
+and OIDC/workload identity are still required before this gateway can protect
+real traffic.
 
 ---
 

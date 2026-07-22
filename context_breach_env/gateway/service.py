@@ -17,6 +17,7 @@ from context_breach_env.gateway.models import (
     AuthorizationResponse,
     PolicyDocument,
 )
+from context_breach_env.gateway.stores import AuditStore, InMemoryAuditStore
 
 
 SENSITIVE_KEY = re.compile(
@@ -42,16 +43,26 @@ OUTBOUND_OR_MUTATING_TOOLS = {
 class AuthorizationService:
     """Fail-closed identity, resource, provenance, and data-flow authorization."""
 
-    def __init__(self, grants: list[AuthorizationGrant] | None = None) -> None:
+    def __init__(
+        self,
+        grants: list[AuthorizationGrant] | None = None,
+        *,
+        audit_store: AuditStore | None = None,
+    ) -> None:
         self._grants = tuple(grants or ())
         self._artifacts: dict[tuple[str, str], ArtifactAssessment] = {}
-        self._audit: dict[str, AuthorizationAuditRecord] = {}
+        self._audit_store = audit_store if audit_store is not None else InMemoryAuditStore()
 
     @classmethod
-    def from_policy_file(cls, path: str | Path) -> AuthorizationService:
+    def from_policy_file(
+        cls,
+        path: str | Path,
+        *,
+        audit_store: AuditStore | None = None,
+    ) -> AuthorizationService:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         document = PolicyDocument.model_validate(payload)
-        return cls(document.grants)
+        return cls(document.grants, audit_store=audit_store)
 
     def register_artifact(self, assessment: ArtifactAssessment) -> None:
         self._artifacts[(assessment.tenant_id, assessment.artifact_id)] = assessment.model_copy(deep=True)
@@ -84,8 +95,7 @@ class AuthorizationService:
         return self._record(request, AuthorizationDecision.PERMIT, "policy_permitted")
 
     def audit_record(self, audit_id: str) -> AuthorizationAuditRecord | None:
-        record = self._audit.get(audit_id)
-        return record.model_copy(deep=True) if record is not None else None
+        return self._audit_store.get_audit(audit_id)
 
     def _find_grant(self, request: AuthorizationRequest) -> AuthorizationGrant | None:
         for grant in self._grants:
@@ -127,13 +137,13 @@ class AuthorizationService:
             agent_id=request.agent_id,
             user_intent_sha256=hashlib.sha256(request.user_intent.encode("utf-8")).hexdigest(),
             tool_name=request.tool_name,
-            resource=request.resource,
+            resource=_audit_safe_resource(request.resource),
             argument_keys=sorted(str(key) for key in request.arguments),
             artifact_ids=list(request.artifact_ids),
             decision=decision,
             reason=reason,
         )
-        self._audit[audit_id] = record
+        self._audit_store.append_audit(record)
         return AuthorizationResponse(decision=decision, reason=reason, audit_id=audit_id)
 
 
@@ -147,3 +157,9 @@ def _contains_sensitive_data(value: Any, key: str = "") -> bool:
     if isinstance(value, str):
         return bool(SENSITIVE_VALUE.search(value))
     return False
+
+
+def _audit_safe_resource(resource: str) -> str:
+    """Retain the resource target while dropping query/fragment credential carriers."""
+
+    return resource.split("?", 1)[0].split("#", 1)[0]

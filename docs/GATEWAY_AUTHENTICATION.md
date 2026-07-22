@@ -21,7 +21,9 @@ Every `POST /v1/authorize` request must include:
 
 Credentials may live for at most 300 seconds by default. The server allows 30
 seconds of future clock skew and consumes a valid nonce exactly once, including
-when the authorization policy ultimately denies the request.
+when the authorization policy ultimately denies the request. With
+`CONTEXT_BREACH_DATABASE_PATH` configured, consumption is atomic across local
+workers and survives restarts.
 
 ## Canonical payload
 
@@ -70,8 +72,8 @@ The gateway rejects:
 
 ## Remaining production work
 
-Nonce state, artifact assessments, and audit records currently live in one
-process. Multiple workers or restarts therefore require a shared durable store
-with atomic nonce consumption. Production deployments also need managed secret
+SQLite now provides single-host durable nonce and audit state. Artifact
+assessments remain process-local, and multi-host deployments require a shared
+database such as PostgreSQL. Production deployments also need managed secret
 storage and rotation, TLS termination, rate limiting, and preferably OIDC or
 workload-identity verification at the ingress boundary.

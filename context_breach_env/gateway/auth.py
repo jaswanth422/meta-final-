@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import secrets
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
 from context_breach_env.gateway.models import AuthorizationRequest
+from context_breach_env.gateway.stores import InMemoryNonceStore, NonceStore
 
 
 class SignedRequestCredentials(BaseModel):
@@ -70,6 +70,7 @@ class HMACRequestAuthenticator:
         max_ttl_seconds: int = 300,
         clock_skew_seconds: int = 30,
         time_source: Callable[[], float] = time.time,
+        nonce_store: NonceStore | None = None,
     ) -> None:
         if max_ttl_seconds <= 0 or clock_skew_seconds < 0:
             raise ValueError("authentication timing limits must be non-negative")
@@ -80,8 +81,7 @@ class HMACRequestAuthenticator:
         self._max_ttl_seconds = max_ttl_seconds
         self._clock_skew_seconds = clock_skew_seconds
         self._time_source = time_source
-        self._used_nonces: dict[tuple[str, str], int] = {}
-        self._nonce_lock = threading.Lock()
+        self._nonce_store = nonce_store if nonce_store is not None else InMemoryNonceStore()
 
     @property
     def configured(self) -> bool:
@@ -133,16 +133,14 @@ class HMACRequestAuthenticator:
         if not hmac.compare_digest(expected, credentials.signature):
             raise AuthenticationError("invalid_request_signature")
 
-        nonce_key = (credentials.key_id, credentials.nonce)
-        with self._nonce_lock:
-            self._used_nonces = {
-                existing: expiry
-                for existing, expiry in self._used_nonces.items()
-                if expiry >= now
-            }
-            if nonce_key in self._used_nonces:
-                raise AuthenticationError("credential_replayed")
-            self._used_nonces[nonce_key] = credentials.expires_at
+        consumed = self._nonce_store.consume_nonce(
+            key_id=credentials.key_id,
+            nonce=credentials.nonce,
+            expires_at=credentials.expires_at,
+            now=now,
+        )
+        if not consumed:
+            raise AuthenticationError("credential_replayed")
 
         return AuthenticatedIdentity(
             key_id=key.key_id,
