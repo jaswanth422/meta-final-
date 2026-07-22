@@ -195,6 +195,44 @@ sequential throughput. Competitive claims require a frozen external benchmark,
 benign hard negatives, an LLM Guard baseline, and repeated hardware-specific
 measurements; the included two-case smoke file is only a harness sanity check.
 
+### Development benchmark result
+
+The tracked 100-case S-Labs development sample produced the following Kaggle
+measurements on 2026-07-21. These numbers are diagnostic, not production or PINT
+claims:
+
+| Detector | Accuracy | Precision | Recall | FPR | p95 latency |
+|---|---:|---:|---:|---:|---:|
+| Static heuristic | 0.50 | 0.00 | 0.00 | 0.00 | 0.03 ms |
+| Qwen3-0.6B | 0.70 | 0.679 | 0.76 | 0.36 | 146.26 ms |
+| LLM Guard | 0.88 | 1.00 | 0.76 | 0.00 | 27.73 ms |
+
+The Qwen baseline is therefore not suitable as the primary blocking detector.
+The product path uses deterministic authorization and provenance controls, with
+detectors treated as replaceable risk signals.
+
+## Authorization gateway MVP
+
+The separate FastAPI gateway evaluates agent tool calls against server-owned
+identity grants, resource patterns, artifact assessments, and sensitive-data
+rules. With no policy file configured it fails closed.
+
+```bash
+export CONTEXT_BREACH_POLICY_FILE=config/authorization-policy.example.json
+context-breach-gateway
+```
+
+`POST /v1/authorize` accepts `tenant_id`, `user_id`, `agent_id`, `user_intent`,
+`tool_name`, `resource`, `arguments`, and `artifact_ids`. It returns `permit`,
+`deny`, or `require_review`, plus a reason and audit ID. Audit records retain
+argument names and an intent fingerprint but deliberately exclude argument
+values and raw intent text.
+
+MVP boundary: identity fields are authorization inputs, not authenticated
+credentials, and audit/artifact state is currently process-local memory. An
+authentication middleware and durable append-only store are required before
+this gateway can protect real traffic.
+
 ---
 
 ## Repository Layout
