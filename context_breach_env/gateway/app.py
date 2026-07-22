@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from context_breach_env.gateway.auth import (
@@ -18,16 +19,30 @@ from context_breach_env.gateway.models import (
     AuthorizationResponse,
 )
 from context_breach_env.gateway.service import AuthorizationService
+from context_breach_env.gateway.stores import (
+    GatewayStateError,
+    GatewayStateStore,
+    SQLiteGatewayStateStore,
+)
 
 
-def _service_from_environment() -> AuthorizationService:
+def _state_store_from_environment() -> GatewayStateStore | None:
+    database_path = os.getenv("CONTEXT_BREACH_DATABASE_PATH")
+    if not database_path:
+        return None
+    return SQLiteGatewayStateStore(database_path)
+
+
+def _service_from_environment(state_store: GatewayStateStore | None = None) -> AuthorizationService:
     policy_path = os.getenv("CONTEXT_BREACH_POLICY_FILE")
     if not policy_path:
-        return AuthorizationService()
-    return AuthorizationService.from_policy_file(policy_path)
+        return AuthorizationService(audit_store=state_store)
+    return AuthorizationService.from_policy_file(policy_path, audit_store=state_store)
 
 
-def _authenticator_from_environment() -> HMACRequestAuthenticator:
+def _authenticator_from_environment(
+    state_store: GatewayStateStore | None = None,
+) -> HMACRequestAuthenticator:
     values = {
         "key_id": os.getenv("CONTEXT_BREACH_HMAC_KEY_ID"),
         "secret": os.getenv("CONTEXT_BREACH_HMAC_SECRET"),
@@ -36,7 +51,7 @@ def _authenticator_from_environment() -> HMACRequestAuthenticator:
         "agent_id": os.getenv("CONTEXT_BREACH_HMAC_AGENT_ID"),
     }
     if not all(values.values()):
-        return HMACRequestAuthenticator()
+        return HMACRequestAuthenticator(nonce_store=state_store)
     key = HMACIdentityKey(
         key_id=str(values["key_id"]),
         secret=str(values["secret"]).encode("utf-8"),
@@ -44,7 +59,7 @@ def _authenticator_from_environment() -> HMACRequestAuthenticator:
         user_id=str(values["user_id"]),
         agent_id=str(values["agent_id"]),
     )
-    return HMACRequestAuthenticator([key])
+    return HMACRequestAuthenticator([key], nonce_store=state_store)
 
 
 def _signed_credentials(
@@ -71,18 +86,32 @@ def _signed_credentials(
 def create_app(
     service: AuthorizationService | None = None,
     authenticator: HMACRequestAuthenticator | None = None,
+    state_store: GatewayStateStore | None = None,
 ) -> FastAPI:
-    resolved_service = service or _service_from_environment()
-    resolved_authenticator = authenticator or _authenticator_from_environment()
+    resolved_state_store = state_store
+    if resolved_state_store is None and (service is None or authenticator is None):
+        resolved_state_store = _state_store_from_environment()
+    resolved_service = service or _service_from_environment(resolved_state_store)
+    resolved_authenticator = authenticator or _authenticator_from_environment(resolved_state_store)
     application = FastAPI(
         title="Context Breach Authorization Gateway",
         version="0.1.0",
     )
 
+    @application.exception_handler(GatewayStateError)
+    async def gateway_state_error_handler(
+        _: Request,
+        __: GatewayStateError,
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "gateway_state_unavailable"})
+
     @application.get("/health")
     def health() -> dict[str, str]:
+        if resolved_state_store is not None:
+            resolved_state_store.health_check()
         authentication = "configured" if resolved_authenticator.configured else "unconfigured"
-        return {"status": "ok", "authentication": authentication}
+        storage = "sqlite" if isinstance(resolved_state_store, SQLiteGatewayStateStore) else "memory"
+        return {"status": "ok", "authentication": authentication, "storage": storage}
 
     @application.post("/v1/authorize", response_model=AuthorizationResponse)
     def authorize(
@@ -115,6 +144,7 @@ def create_app(
 
     application.state.authorization_service = resolved_service
     application.state.request_authenticator = resolved_authenticator
+    application.state.gateway_state_store = resolved_state_store
     return application
 
 
