@@ -258,6 +258,12 @@ requests emit privacy-limited structured JSON logs. See the
 [gateway observability guide](docs/GATEWAY_OBSERVABILITY.md) for scrape commands,
 the exact metric contract, privacy guarantees, and process-local limitations.
 
+The [gateway reliability guide](docs/GATEWAY_RELIABILITY.md) provides a concurrent
+signed-request harness, correctness and latency gates, failure-recovery semantics,
+and tracked local measurements. The current SQLite backend preserved all decisions
+and audits but exceeded 500 ms p99 latency in repeated eight-way-concurrency trials;
+it is not presented as a multi-host or strict-tail production store.
+
 MVP boundary: SQLite provides single-host durability, while artifact assessments
 and metrics remain process-local. PostgreSQL for multiple hosts, managed key
 rotation, TLS, distributed tracing, and OIDC/workload identity are still required
