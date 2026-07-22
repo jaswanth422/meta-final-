@@ -1,0 +1,12 @@
+{
+  "grants": [
+    {
+      "tenant_id": "demo-tenant",
+      "user_id": "analyst-1",
+      "agent_id": "research-agent",
+      "allowed_tools": ["read_document", "search_documents"],
+      "review_tools": ["send_email", "http_request"],
+      "resource_patterns": ["documents/*", "mailto:*", "https://approved.example/*"]
+    }
+  ]
+}

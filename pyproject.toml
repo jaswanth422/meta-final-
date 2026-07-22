@@ -13,10 +13,12 @@ dependencies = [
 
 [project.scripts]
 server = "context_breach_env.server.cli:main"
+context-breach-gateway = "context_breach_env.gateway.cli:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "httpx",
 ]
 training = [
     "trl>=0.25.0",
