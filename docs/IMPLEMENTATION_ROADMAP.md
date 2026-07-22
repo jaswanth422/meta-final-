@@ -17,7 +17,8 @@
 - [ ] Add object-lock quarantine adapter.
 - [ ] Load HMAC/Ed25519 keys from a managed secret service and support rotation.
 - [ ] Add authenticated administration and human-review APIs.
-- [ ] Add structured logging, tracing, Prometheus metrics, and health checks.
+- [x] Add privacy-limited structured request logging, Prometheus metrics, and health checks.
+- [ ] Add distributed tracing and production exporter integration.
 - [ ] Run load, failure-recovery, and concurrent-session tests.
 
 ## Phase 3 — Model and benchmark validation
