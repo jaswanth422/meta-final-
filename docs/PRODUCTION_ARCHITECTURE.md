@@ -163,6 +163,8 @@ untrusted production events must pass review and dataset-governance controls.
 | Production CSI and confidence intervals | Implemented |
 | Durable PostgreSQL/object-store adapters | Not implemented |
 | Managed signing keys and rotation | Not implemented |
+| Structured request logs and Prometheus metrics | Implemented locally |
+| Distributed tracing and production exporters | Not implemented |
 | Independent semantic classifier | Not implemented |
 | Real sandboxed worker models | Not implemented |
 | Human-review integration | Not implemented |

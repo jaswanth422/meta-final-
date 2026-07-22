@@ -225,6 +225,7 @@ export CONTEXT_BREACH_HMAC_SECRET="$(openssl rand -hex 32)"
 export CONTEXT_BREACH_HMAC_TENANT_ID=demo-tenant
 export CONTEXT_BREACH_HMAC_USER_ID=analyst-1
 export CONTEXT_BREACH_HMAC_AGENT_ID=research-agent
+export CONTEXT_BREACH_METRICS_TOKEN="$(openssl rand -hex 32)"
 context-breach-gateway
 ```
 
@@ -250,10 +251,17 @@ persistent-volume requirements, backup behavior, and failure guarantees. Without
 `CONTEXT_BREACH_DATABASE_PATH`, the gateway reports and uses an in-memory
 development fallback.
 
+`GET /metrics` exposes bounded-cardinality request, decision, authentication,
+state-failure, and latency metrics only when presented with the separate metrics
+bearer token. Every response also carries a generated `X-Request-ID`, and completed
+requests emit privacy-limited structured JSON logs. See the
+[gateway observability guide](docs/GATEWAY_OBSERVABILITY.md) for scrape commands,
+the exact metric contract, privacy guarantees, and process-local limitations.
+
 MVP boundary: SQLite provides single-host durability, while artifact assessments
-remain process-local. PostgreSQL for multiple hosts, managed key rotation, TLS,
-and OIDC/workload identity are still required before this gateway can protect
-real traffic.
+and metrics remain process-local. PostgreSQL for multiple hosts, managed key
+rotation, TLS, distributed tracing, and OIDC/workload identity are still required
+before this gateway can protect real traffic.
 
 ---
 
