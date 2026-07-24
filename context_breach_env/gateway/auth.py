@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from context_breach_env.gateway.models import AuthorizationRequest
+from context_breach_env.gateway.models import AuthorizationRequest, MCPAuthorizationRequest
 from context_breach_env.gateway.stores import InMemoryNonceStore, NonceStore
 
 
@@ -109,6 +109,24 @@ class HMACRequestAuthenticator:
         payload = canonical_json({"audit_id": audit_id})
         return self._verify("audit", payload, credentials)
 
+    def verify_mcp_authorization(
+        self,
+        request: MCPAuthorizationRequest,
+        credentials: SignedRequestCredentials,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "mcp_authorize",
+            canonical_mcp_authorization_payload(request),
+            credentials,
+        )
+        if (
+            request.tenant_id != identity.tenant_id
+            or request.user_id != identity.user_id
+            or request.agent_id != identity.agent_id
+        ):
+            raise AuthenticationError("credential_identity_mismatch")
+        return identity
+
     def _verify(
         self,
         purpose: str,
@@ -189,6 +207,22 @@ class HMACRequestSigner:
             issued_at=issued_at,
         )
 
+    def sign_mcp_authorization(
+        self,
+        request: MCPAuthorizationRequest,
+        *,
+        ttl_seconds: int = 60,
+        nonce: str | None = None,
+        issued_at: int | None = None,
+    ) -> SignedRequestCredentials:
+        return self._sign(
+            "mcp_authorize",
+            canonical_mcp_authorization_payload(request),
+            ttl_seconds=ttl_seconds,
+            nonce=nonce,
+            issued_at=issued_at,
+        )
+
     def _sign(
         self,
         purpose: str,
@@ -214,6 +248,10 @@ class HMACRequestSigner:
 
 
 def canonical_authorization_payload(request: AuthorizationRequest) -> bytes:
+    return canonical_json(request.model_dump(mode="json"))
+
+
+def canonical_mcp_authorization_payload(request: MCPAuthorizationRequest) -> bytes:
     return canonical_json(request.model_dump(mode="json"))
 
 

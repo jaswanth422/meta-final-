@@ -15,8 +15,11 @@ from context_breach_env.gateway.models import (
     AuthorizationGrant,
     AuthorizationRequest,
     AuthorizationResponse,
+    MCPAuthorizationRequest,
+    MCPToolBinding,
     PolicyDocument,
 )
+from context_breach_env.gateway.mcp import MCPBindingError, MCPBindingRegistry
 from context_breach_env.gateway.stores import AuditStore, InMemoryAuditStore
 
 
@@ -47,10 +50,12 @@ class AuthorizationService:
         self,
         grants: list[AuthorizationGrant] | None = None,
         *,
+        mcp_bindings: list[MCPToolBinding] | None = None,
         audit_store: AuditStore | None = None,
     ) -> None:
         self._grants = tuple(grants or ())
         self._artifacts: dict[tuple[str, str], ArtifactAssessment] = {}
+        self._mcp_bindings = MCPBindingRegistry(mcp_bindings)
         self._audit_store = audit_store if audit_store is not None else InMemoryAuditStore()
 
     @classmethod
@@ -62,7 +67,11 @@ class AuthorizationService:
     ) -> AuthorizationService:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         document = PolicyDocument.model_validate(payload)
-        return cls(document.grants, audit_store=audit_store)
+        return cls(
+            document.grants,
+            mcp_bindings=document.mcp_bindings,
+            audit_store=audit_store,
+        )
 
     def register_artifact(self, assessment: ArtifactAssessment) -> None:
         self._artifacts[(assessment.tenant_id, assessment.artifact_id)] = assessment.model_copy(deep=True)
@@ -93,6 +102,35 @@ class AuthorizationService:
             return self._record(request, AuthorizationDecision.REQUIRE_REVIEW, "high_risk_tool_requires_review")
 
         return self._record(request, AuthorizationDecision.PERMIT, "policy_permitted")
+
+    def authorize_mcp(self, request: MCPAuthorizationRequest) -> AuthorizationResponse:
+        try:
+            binding, resource = self._mcp_bindings.resolve(request)
+        except MCPBindingError as error:
+            reason = str(error)
+            denied_request = AuthorizationRequest(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                agent_id=request.agent_id,
+                user_intent=request.user_intent,
+                tool_name="unregistered_mcp_tool",
+                resource="mcp://invalid-or-unregistered",
+                arguments={},
+                artifact_ids=request.artifact_ids,
+            )
+            return self._record(denied_request, AuthorizationDecision.DENY, reason)
+
+        authorization_request = AuthorizationRequest(
+            tenant_id=request.tenant_id,
+            user_id=request.user_id,
+            agent_id=request.agent_id,
+            user_intent=request.user_intent,
+            tool_name=binding.policy_tool_name,
+            resource=resource,
+            arguments=request.call.params.arguments,
+            artifact_ids=request.artifact_ids,
+        )
+        return self.authorize(authorization_request)
 
     def audit_record(self, audit_id: str) -> AuthorizationAuditRecord | None:
         return self._audit_store.get_audit(audit_id)

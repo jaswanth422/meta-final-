@@ -60,6 +60,11 @@ Audit lookup uses the same construction with purpose `audit` and the canonical
 payload `{"audit_id":"<audit-id>"}`. It requires a fresh nonce and only returns
 records from the signing key's tenant.
 
+MCP authorization uses purpose `mcp_authorize` and the canonical validated
+`MCPAuthorizationRequest` body. Its signature covers the identity, intent, MCP server,
+complete JSON-RPC `tools/call`, arguments, and artifact IDs. It uses the same expiry,
+identity binding, and one-time nonce rules.
+
 ## Fail-closed behavior
 
 The gateway rejects:

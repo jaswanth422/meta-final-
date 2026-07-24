@@ -264,6 +264,12 @@ and tracked local measurements. The current SQLite backend preserved all decisio
 and audits but exceeded 500 ms p99 latency in repeated eight-way-concurrency trials;
 it is not presented as a multi-host or strict-tail production store.
 
+`POST /v1/mcp/authorize` adds strict, signed authorization for MCP `tools/call`
+requests. Server-owned bindings derive policy resources from designated arguments,
+and the reference interceptor executes downstream only after `permit`. See the
+[MCP tool interception guide](docs/MCP_TOOL_INTERCEPTION.md) for configuration,
+path/URL/email canonicalization, smoke commands, and the explicit bypass boundary.
+
 MVP boundary: SQLite provides single-host durability, while artifact assessments
 and metrics remain process-local. PostgreSQL for multiple hosts, managed key
 rotation, TLS, distributed tracing, and OIDC/workload identity are still required
