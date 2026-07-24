@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AuthorizationDecision(str, Enum):
@@ -14,6 +14,8 @@ class AuthorizationDecision(str, Enum):
 
 
 class AuthorizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tenant_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
@@ -31,6 +33,8 @@ class AuthorizationResponse(BaseModel):
 
 
 class AuthorizationGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tenant_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
@@ -39,8 +43,54 @@ class AuthorizationGrant(BaseModel):
     resource_patterns: tuple[str, ...] = ()
 
 
+class MCPToolCallParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:/-]+$")
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class MCPToolCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    jsonrpc: Literal["2.0"] = "2.0"
+    id: str | int = Field(union_mode="left_to_right")
+    method: Literal["tools/call"] = "tools/call"
+    params: MCPToolCallParams
+
+
+class MCPAuthorizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    agent_id: str = Field(min_length=1, max_length=128)
+    user_intent: str = Field(min_length=1, max_length=2_000)
+    server_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:/-]+$",
+    )
+    call: MCPToolCall
+    artifact_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class MCPToolBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    server_name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:/-]+$")
+    mcp_tool_name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:/-]+$")
+    policy_tool_name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:/-]+$")
+    resource_argument: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    resource_kind: Literal["path", "url", "email"]
+    resource_prefix: str = Field(default="", max_length=512)
+
+
 class PolicyDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     grants: list[AuthorizationGrant] = Field(default_factory=list)
+    mcp_bindings: list[MCPToolBinding] = Field(default_factory=list)
 
 
 class ArtifactAssessment(BaseModel):

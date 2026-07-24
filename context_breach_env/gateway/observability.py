@@ -163,11 +163,13 @@ def operation_name(route: str) -> str:
         "/health": "health",
         "/metrics": "metrics",
         "/v1/authorize": "authorize",
+        "/v1/mcp/authorize": "mcp_authorize",
         "/v1/audit/{audit_id}": "audit",
         "authorize": "authorize",
         "audit": "audit",
         "health": "health",
         "metrics": "metrics",
+        "mcp_authorize": "mcp_authorize",
     }
     return known.get(route, "unmatched")
 
@@ -196,6 +198,8 @@ def _safe_reason(reason: str) -> str:
         "invalid_request_signature",
         "malformed_authentication_headers",
         "metrics_authentication_required",
+        "mcp_resource_invalid",
+        "mcp_tool_not_registered",
         "policy_permitted",
         "resource_not_authorized",
         "sensitive_data_exfiltration",

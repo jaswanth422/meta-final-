@@ -22,6 +22,7 @@ from context_breach_env.gateway.models import (
     AuthorizationAuditRecord,
     AuthorizationRequest,
     AuthorizationResponse,
+    MCPAuthorizationRequest,
 )
 from context_breach_env.gateway.observability import (
     GatewayMetrics,
@@ -204,6 +205,22 @@ def create_app(
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
         response = resolved_service.authorize(request)
+        resolved_metrics.record_decision(
+            decision=response.decision.value,
+            reason=response.reason,
+        )
+        return response
+
+    @application.post("/v1/mcp/authorize", response_model=AuthorizationResponse)
+    def authorize_mcp(
+        request: MCPAuthorizationRequest,
+        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+    ) -> AuthorizationResponse:
+        try:
+            resolved_authenticator.verify_mcp_authorization(request, credentials)
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail=error.reason) from error
+        response = resolved_service.authorize_mcp(request)
         resolved_metrics.record_decision(
             decision=response.decision.value,
             reason=response.reason,

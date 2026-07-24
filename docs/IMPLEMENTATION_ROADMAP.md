@@ -21,6 +21,8 @@
 - [ ] Add distributed tracing and production exporter integration.
 - [x] Run local load, failure-recovery, replay-race, and concurrent-session tests.
 - [ ] Run sustained multi-worker and PostgreSQL deployment load/chaos tests.
+- [x] Add strict signed MCP `tools/call` authorization and execute-after-permit guard.
+- [ ] Add a non-bypassable MCP proxy, workload identity propagation, and result scanning.
 
 ## Phase 3 — Model and benchmark validation
 
