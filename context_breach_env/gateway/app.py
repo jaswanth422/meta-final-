@@ -23,6 +23,8 @@ from context_breach_env.gateway.models import (
     AuthorizationRequest,
     AuthorizationResponse,
     MCPAuthorizationRequest,
+    MCPExecutionAuditRecord,
+    MCPProxyResponse,
 )
 from context_breach_env.gateway.observability import (
     GatewayMetrics,
@@ -31,9 +33,15 @@ from context_breach_env.gateway.observability import (
     structured_log,
 )
 from context_breach_env.gateway.service import AuthorizationService
+from context_breach_env.gateway.proxy import (
+    DefaultMCPResultScanner,
+    MCPDownstreamRegistry,
+    MCPProxy,
+)
 from context_breach_env.gateway.stores import (
     GatewayStateError,
     GatewayStateStore,
+    InMemoryExecutionAuditStore,
     SQLiteGatewayStateStore,
 )
 
@@ -74,6 +82,13 @@ def _authenticator_from_environment(
     return HMACRequestAuthenticator([key], nonce_store=state_store)
 
 
+def _mcp_downstreams_from_environment() -> MCPDownstreamRegistry:
+    path = os.getenv("CONTEXT_BREACH_MCP_DOWNSTREAMS_FILE")
+    if not path:
+        return MCPDownstreamRegistry()
+    return MCPDownstreamRegistry.from_file(path)
+
+
 def _signed_credentials(
     key_id: Annotated[str | None, Header(alias="X-Context-Key-Id")] = None,
     issued_at: Annotated[str | None, Header(alias="X-Context-Issued-At")] = None,
@@ -101,6 +116,7 @@ def create_app(
     state_store: GatewayStateStore | None = None,
     metrics: GatewayMetrics | None = None,
     metrics_token: str | None = None,
+    mcp_proxy: MCPProxy | None = None,
 ) -> FastAPI:
     resolved_state_store = state_store
     if resolved_state_store is None and (service is None or authenticator is None):
@@ -110,6 +126,17 @@ def create_app(
     resolved_metrics = metrics or GatewayMetrics()
     resolved_metrics_token = (
         os.getenv("CONTEXT_BREACH_METRICS_TOKEN") if metrics_token is None else metrics_token
+    )
+    resolved_execution_store = (
+        resolved_state_store
+        if resolved_state_store is not None
+        else InMemoryExecutionAuditStore()
+    )
+    resolved_mcp_proxy = mcp_proxy or MCPProxy(
+        authorization_service=resolved_service,
+        downstreams=_mcp_downstreams_from_environment(),
+        execution_store=resolved_execution_store,
+        result_scanner=DefaultMCPResultScanner(),
     )
     if resolved_metrics_token is not None and len(resolved_metrics_token) < 32:
         raise ValueError("metrics bearer token must contain at least 32 characters")
@@ -227,6 +254,22 @@ def create_app(
         )
         return response
 
+    @application.post("/v1/mcp/proxy", response_model=MCPProxyResponse)
+    def proxy_mcp(
+        request: MCPAuthorizationRequest,
+        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+    ) -> MCPProxyResponse:
+        try:
+            resolved_authenticator.verify_mcp_proxy(request, credentials)
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail=error.reason) from error
+        response = resolved_mcp_proxy.execute(request)
+        resolved_metrics.record_decision(
+            decision=response.authorization.decision.value,
+            reason=response.authorization.reason,
+        )
+        return response
+
     @application.get("/v1/audit/{audit_id}", response_model=AuthorizationAuditRecord)
     def audit_record(
         audit_id: str,
@@ -245,10 +288,35 @@ def create_app(
             raise HTTPException(status_code=404, detail="audit record not found")
         return record
 
+    @application.get(
+        "/v1/mcp/executions/{execution_id}",
+        response_model=MCPExecutionAuditRecord,
+    )
+    def execution_record(
+        execution_id: str,
+        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+    ) -> MCPExecutionAuditRecord:
+        try:
+            identity = resolved_authenticator.verify_execution_access(
+                execution_id,
+                credentials,
+            )
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail=error.reason) from error
+        record = resolved_mcp_proxy.execution_store.get_execution(execution_id)
+        if record is None or (
+            record.tenant_id != identity.tenant_id
+            or record.user_id != identity.user_id
+            or record.agent_id != identity.agent_id
+        ):
+            raise HTTPException(status_code=404, detail="MCP execution record not found")
+        return record
+
     application.state.authorization_service = resolved_service
     application.state.request_authenticator = resolved_authenticator
     application.state.gateway_state_store = resolved_state_store
     application.state.gateway_metrics = resolved_metrics
+    application.state.mcp_proxy = resolved_mcp_proxy
     return application
 
 

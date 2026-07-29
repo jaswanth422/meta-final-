@@ -22,7 +22,10 @@
 - [x] Run local load, failure-recovery, replay-race, and concurrent-session tests.
 - [ ] Run sustained multi-worker and PostgreSQL deployment load/chaos tests.
 - [x] Add strict signed MCP `tools/call` authorization and execute-after-permit guard.
-- [ ] Add a non-bypassable MCP proxy, workload identity propagation, and result scanning.
+- [x] Add fixed-target server-side MCP `tools/call` forwarding, result scanning, and
+      privacy-limited execution audits.
+- [ ] Add deployment network isolation, full MCP transports, and workload identity
+      propagation so direct downstream bypass is impossible.
 
 ## Phase 3 — Model and benchmark validation
 

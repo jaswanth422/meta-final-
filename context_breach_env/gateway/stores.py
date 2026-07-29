@@ -10,7 +10,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from context_breach_env.gateway.models import AuthorizationAuditRecord
+from context_breach_env.gateway.models import AuthorizationAuditRecord, MCPExecutionAuditRecord
 
 
 class GatewayStateError(RuntimeError):
@@ -23,11 +23,17 @@ class AuditStore(Protocol):
     def get_audit(self, audit_id: str) -> AuthorizationAuditRecord | None: ...
 
 
+class ExecutionAuditStore(Protocol):
+    def append_execution(self, record: MCPExecutionAuditRecord) -> None: ...
+
+    def get_execution(self, execution_id: str) -> MCPExecutionAuditRecord | None: ...
+
+
 class NonceStore(Protocol):
     def consume_nonce(self, *, key_id: str, nonce: str, expires_at: int, now: int) -> bool: ...
 
 
-class GatewayStateStore(AuditStore, NonceStore, Protocol):
+class GatewayStateStore(AuditStore, ExecutionAuditStore, NonceStore, Protocol):
     def health_check(self) -> None: ...
 
 
@@ -67,11 +73,30 @@ class InMemoryNonceStore:
             return True
 
 
+class InMemoryExecutionAuditStore:
+    def __init__(self) -> None:
+        self._records: dict[str, MCPExecutionAuditRecord] = {}
+        self._lock = threading.Lock()
+
+    def append_execution(self, record: MCPExecutionAuditRecord) -> None:
+        with self._lock:
+            if record.execution_id in self._records:
+                raise GatewayStateError("duplicate execution ID")
+            self._records[record.execution_id] = record.model_copy(deep=True)
+
+    def get_execution(self, execution_id: str) -> MCPExecutionAuditRecord | None:
+        with self._lock:
+            record = self._records.get(execution_id)
+            return record.model_copy(deep=True) if record is not None else None
+
+
 class InMemoryGatewayStateStore:
     def __init__(self) -> None:
         self._records: dict[str, AuthorizationAuditRecord] = {}
+        self._execution_records: dict[str, MCPExecutionAuditRecord] = {}
         self._used: dict[tuple[str, str], int] = {}
         self._audit_lock = threading.Lock()
+        self._execution_lock = threading.Lock()
         self._nonce_lock = threading.Lock()
 
     def append_audit(self, record: AuthorizationAuditRecord) -> None:
@@ -83,6 +108,17 @@ class InMemoryGatewayStateStore:
     def get_audit(self, audit_id: str) -> AuthorizationAuditRecord | None:
         with self._audit_lock:
             record = self._records.get(audit_id)
+            return record.model_copy(deep=True) if record is not None else None
+
+    def append_execution(self, record: MCPExecutionAuditRecord) -> None:
+        with self._execution_lock:
+            if record.execution_id in self._execution_records:
+                raise GatewayStateError("duplicate execution ID")
+            self._execution_records[record.execution_id] = record.model_copy(deep=True)
+
+    def get_execution(self, execution_id: str) -> MCPExecutionAuditRecord | None:
+        with self._execution_lock:
+            record = self._execution_records.get(execution_id)
             return record.model_copy(deep=True) if record is not None else None
 
     def consume_nonce(self, *, key_id: str, nonce: str, expires_at: int, now: int) -> bool:
@@ -105,7 +141,7 @@ class InMemoryGatewayStateStore:
 class SQLiteGatewayStateStore:
     """Single-host durable state with atomic cross-process nonce consumption."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: str | Path, *, timeout_seconds: float = 5.0) -> None:
         if timeout_seconds <= 0:
@@ -156,6 +192,50 @@ class SQLiteGatewayStateStore:
         except (ValidationError, ValueError, TypeError) as error:
             raise GatewayStateError("stored audit record is invalid") from error
 
+    def append_execution(self, record: MCPExecutionAuditRecord) -> None:
+        payload = record.model_dump_json()
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO gateway_mcp_execution_records (
+                        execution_id, authorization_audit_id, tenant_id, user_id,
+                        agent_id, record_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.execution_id,
+                        record.authorization_audit_id,
+                        record.tenant_id,
+                        record.user_id,
+                        record.agent_id,
+                        payload,
+                        record.timestamp.isoformat(),
+                    ),
+                )
+        except sqlite3.Error as error:
+            raise GatewayStateError("failed to append MCP execution record") from error
+
+    def get_execution(self, execution_id: str) -> MCPExecutionAuditRecord | None:
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT record_json
+                    FROM gateway_mcp_execution_records
+                    WHERE execution_id = ?
+                    """,
+                    (execution_id,),
+                ).fetchone()
+        except sqlite3.Error as error:
+            raise GatewayStateError("failed to read MCP execution record") from error
+        if row is None:
+            return None
+        try:
+            return MCPExecutionAuditRecord.model_validate_json(row["record_json"])
+        except (ValidationError, ValueError, TypeError) as error:
+            raise GatewayStateError("stored MCP execution record is invalid") from error
+
     def consume_nonce(self, *, key_id: str, nonce: str, expires_at: int, now: int) -> bool:
         connection = self._connect()
         try:
@@ -182,6 +262,7 @@ class SQLiteGatewayStateStore:
         try:
             with self._connection() as connection:
                 connection.execute("SELECT 1 FROM gateway_audit_records LIMIT 1").fetchone()
+                connection.execute("SELECT 1 FROM gateway_mcp_execution_records LIMIT 1").fetchone()
                 connection.execute("SELECT 1 FROM gateway_nonces LIMIT 1").fetchone()
         except sqlite3.Error as error:
             raise GatewayStateError("gateway state health check failed") from error
@@ -216,6 +297,18 @@ class SQLiteGatewayStateStore:
                         created_at TEXT NOT NULL
                     );
 
+                    CREATE TABLE IF NOT EXISTS gateway_mcp_execution_records (
+                        execution_id TEXT PRIMARY KEY,
+                        authorization_audit_id TEXT NOT NULL,
+                        tenant_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        record_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY (authorization_audit_id)
+                            REFERENCES gateway_audit_records(audit_id)
+                    );
+
                     CREATE TRIGGER IF NOT EXISTS gateway_audit_no_update
                     BEFORE UPDATE ON gateway_audit_records
                     BEGIN
@@ -228,7 +321,19 @@ class SQLiteGatewayStateStore:
                         SELECT RAISE(ABORT, 'audit records are append-only');
                     END;
 
-                    PRAGMA user_version = 1;
+                    CREATE TRIGGER IF NOT EXISTS gateway_mcp_execution_no_update
+                    BEFORE UPDATE ON gateway_mcp_execution_records
+                    BEGIN
+                        SELECT RAISE(ABORT, 'MCP execution records are append-only');
+                    END;
+
+                    CREATE TRIGGER IF NOT EXISTS gateway_mcp_execution_no_delete
+                    BEFORE DELETE ON gateway_mcp_execution_records
+                    BEGIN
+                        SELECT RAISE(ABORT, 'MCP execution records are append-only');
+                    END;
+
+                    PRAGMA user_version = 2;
                     """
                 )
             os.chmod(self.path, 0o600)

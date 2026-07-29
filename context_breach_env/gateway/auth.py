@@ -109,6 +109,14 @@ class HMACRequestAuthenticator:
         payload = canonical_json({"audit_id": audit_id})
         return self._verify("audit", payload, credentials)
 
+    def verify_execution_access(
+        self,
+        execution_id: str,
+        credentials: SignedRequestCredentials,
+    ) -> AuthenticatedIdentity:
+        payload = canonical_json({"execution_id": execution_id})
+        return self._verify("mcp_execution", payload, credentials)
+
     def verify_mcp_authorization(
         self,
         request: MCPAuthorizationRequest,
@@ -116,6 +124,24 @@ class HMACRequestAuthenticator:
     ) -> AuthenticatedIdentity:
         identity = self._verify(
             "mcp_authorize",
+            canonical_mcp_authorization_payload(request),
+            credentials,
+        )
+        if (
+            request.tenant_id != identity.tenant_id
+            or request.user_id != identity.user_id
+            or request.agent_id != identity.agent_id
+        ):
+            raise AuthenticationError("credential_identity_mismatch")
+        return identity
+
+    def verify_mcp_proxy(
+        self,
+        request: MCPAuthorizationRequest,
+        credentials: SignedRequestCredentials,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "mcp_proxy",
             canonical_mcp_authorization_payload(request),
             credentials,
         )
@@ -207,6 +233,22 @@ class HMACRequestSigner:
             issued_at=issued_at,
         )
 
+    def sign_execution_access(
+        self,
+        execution_id: str,
+        *,
+        ttl_seconds: int = 60,
+        nonce: str | None = None,
+        issued_at: int | None = None,
+    ) -> SignedRequestCredentials:
+        return self._sign(
+            "mcp_execution",
+            canonical_json({"execution_id": execution_id}),
+            ttl_seconds=ttl_seconds,
+            nonce=nonce,
+            issued_at=issued_at,
+        )
+
     def sign_mcp_authorization(
         self,
         request: MCPAuthorizationRequest,
@@ -217,6 +259,22 @@ class HMACRequestSigner:
     ) -> SignedRequestCredentials:
         return self._sign(
             "mcp_authorize",
+            canonical_mcp_authorization_payload(request),
+            ttl_seconds=ttl_seconds,
+            nonce=nonce,
+            issued_at=issued_at,
+        )
+
+    def sign_mcp_proxy(
+        self,
+        request: MCPAuthorizationRequest,
+        *,
+        ttl_seconds: int = 60,
+        nonce: str | None = None,
+        issued_at: int | None = None,
+    ) -> SignedRequestCredentials:
+        return self._sign(
+            "mcp_proxy",
             canonical_mcp_authorization_payload(request),
             ttl_seconds=ttl_seconds,
             nonce=nonce,
