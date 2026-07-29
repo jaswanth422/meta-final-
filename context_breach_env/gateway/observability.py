@@ -164,12 +164,16 @@ def operation_name(route: str) -> str:
         "/metrics": "metrics",
         "/v1/authorize": "authorize",
         "/v1/mcp/authorize": "mcp_authorize",
+        "/v1/mcp/proxy": "mcp_proxy",
+        "/v1/mcp/executions/{execution_id}": "mcp_execution",
         "/v1/audit/{audit_id}": "audit",
         "authorize": "authorize",
         "audit": "audit",
         "health": "health",
         "metrics": "metrics",
         "mcp_authorize": "mcp_authorize",
+        "mcp_execution": "mcp_execution",
+        "mcp_proxy": "mcp_proxy",
     }
     return known.get(route, "unmatched")
 

@@ -270,10 +270,21 @@ and the reference interceptor executes downstream only after `permit`. See the
 [MCP tool interception guide](docs/MCP_TOOL_INTERCEPTION.md) for configuration,
 path/URL/email canonicalization, smoke commands, and the explicit bypass boundary.
 
+`POST /v1/mcp/proxy` is the first server-side enforcement path. It requires a
+purpose-separated execution signature, authorizes an immutable request snapshot,
+forwards only permitted calls to a fixed server-owned downstream URL, scans the
+JSON-RPC result before release, and appends a privacy-limited execution record.
+Downstream bearer tokens are resolved from environment variables named by the
+trusted `CONTEXT_BREACH_MCP_DOWNSTREAMS_FILE`; clients cannot supply a target URL or
+credential. The example is `config/mcp-downstreams.example.json`.
+
 MVP boundary: SQLite provides single-host durability, while artifact assessments
 and metrics remain process-local. PostgreSQL for multiple hosts, managed key
 rotation, TLS, distributed tracing, and OIDC/workload identity are still required
-before this gateway can protect real traffic.
+before this gateway can protect real traffic. The proxy currently supports
+request/response JSON-RPC for `tools/call`; MCP initialization, capability
+negotiation, tool discovery, Streamable HTTP/SSE, cancellation, and OS/network
+isolation that prevents direct downstream access remain future work.
 
 ---
 

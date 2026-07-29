@@ -75,6 +75,13 @@ class MCPAuthorizationRequest(BaseModel):
     artifact_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
+class MCPProxyResponse(BaseModel):
+    authorization: AuthorizationResponse
+    execution_id: str | None = None
+    status: Literal["not_executed", "succeeded", "failed", "response_blocked"]
+    result: Any = None
+
+
 class MCPToolBinding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,4 +120,18 @@ class AuthorizationAuditRecord(BaseModel):
     artifact_ids: list[str]
     decision: AuthorizationDecision
     reason: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class MCPExecutionAuditRecord(BaseModel):
+    execution_id: str
+    authorization_audit_id: str
+    tenant_id: str
+    user_id: str
+    agent_id: str
+    server_name: str
+    tool_name: str
+    status: Literal["succeeded", "failed", "response_blocked"]
+    result_sha256: str | None = None
+    failure_reason: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

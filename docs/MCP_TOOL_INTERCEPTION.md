@@ -5,8 +5,11 @@ the downstream tool. The integration uses server-owned bindings to translate an 
 server/tool pair and one designated argument into the existing deterministic identity,
 tool, resource, provenance, and sensitive-data policy engine.
 
-This is an authorization adapter and reference execution guard. It is not yet a
-transparent MCP proxy.
+The repository now has two paths:
+
+- `/v1/mcp/authorize` is an authorization-only adapter.
+- `/v1/mcp/proxy` is a server-side `tools/call` execution foundation with fixed
+  downstream targets, result scanning, and execution audits.
 
 ## Configure server-owned bindings
 
@@ -98,15 +101,55 @@ PYTHONPATH=. python scripts/smoke_mcp_gateway.py \
   --base-url http://127.0.0.1:8081 --mode deny
 ```
 
+## Server-side proxy execution
+
+Configure downstream MCP servers in a trusted file rather than accepting a URL or
+credential from the caller:
+
+```bash
+export CONTEXT_BREACH_MCP_DOWNSTREAMS_FILE=config/mcp-downstreams.example.json
+export FILESYSTEM_MCP_BEARER_TOKEN="$(openssl rand -hex 32)"
+```
+
+Each server definition fixes the `server_name`, endpoint, timeout, maximum response
+size, and optional environment-variable name containing its bearer token. HTTPS is
+required except when `allow_loopback_http` is explicitly enabled for a loopback
+development server.
+
+`POST /v1/mcp/proxy` requires credentials signed for the separate `mcp_proxy`
+purpose. An `mcp_authorize` signature is rejected, preventing an authorize-only
+credential from being upgraded into execution authority. The proxy:
+
+1. deep-copies and authorizes the signed request;
+2. refuses to call downstream for `deny` or `require_review`;
+3. sends the original JSON-RPC `tools/call` to the configured fixed endpoint;
+4. validates the JSON-RPC version, ID, and result/error shape;
+5. blocks oversized, non-JSON, secret-bearing, or injection-bearing results; and
+6. appends an execution record containing status and a result hash, never raw output.
+
+Signed, identity-bound execution records are available at
+`GET /v1/mcp/executions/{execution_id}`.
+
+With the gateway and a compatible downstream MCP server running, exercise the path:
+
+```bash
+PYTHONPATH=. python scripts/smoke_mcp_proxy.py \
+  --base-url http://127.0.0.1:8081 --mode permit
+
+PYTHONPATH=. python scripts/smoke_mcp_proxy.py \
+  --base-url http://127.0.0.1:8081 --mode deny
+```
+
 ## Security boundary and remaining work
 
-The endpoint does not stop a compromised or incorrectly configured client from calling
-an MCP server directly. A real deployment must place MCP server network access and
-credentials behind an enforcement proxy or workload boundary so bypass is impossible.
+The proxy keeps the configured downstream URL and credential out of the client
+request. This becomes non-bypassable only when deployment networking prevents the
+agent workload from reaching the MCP server directly and only the proxy possesses
+the downstream credential.
 
 This version does not proxy MCP initialization, capability negotiation, tool listing,
-notifications, streaming, cancellation, or downstream responses. It does not propagate
-OAuth/workload identity to MCP servers, attest tool servers, scan tool results, bind a
-permit cryptographically to one downstream execution, or record downstream success.
-Policy configuration, the gateway process, and the client-side execution guard remain
-trusted. Those gaps must be closed before claiming complete MCP containment.
+notifications, Streamable HTTP/SSE, or cancellation. It does not yet propagate
+OAuth/workload identity, attest tool servers, provide per-tool result policies, or
+create an OS-level workload boundary. Policy configuration, the gateway process,
+downstream configuration, and deployment network remain trusted. Those gaps must be
+closed before claiming complete MCP containment.

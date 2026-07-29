@@ -168,7 +168,8 @@ untrusted production events must pass review and dataset-governance controls.
 | Local concurrency and failure-recovery harness | Implemented locally |
 | Sustained distributed load and chaos testing | Not completed |
 | Signed MCP tool-call authorization adapter | Implemented locally |
-| Non-bypassable MCP proxy and result scanning | Not implemented |
+| Fixed-target MCP `tools/call` proxy and result scanning | Implemented locally |
+| Full MCP transports and non-bypassable workload boundary | Not implemented |
 | Independent semantic classifier | Not implemented |
 | Real sandboxed worker models | Not implemented |
 | Human-review integration | Not implemented |
