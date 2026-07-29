@@ -6,11 +6,15 @@ import json
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
-from context_breach_env.gateway.models import AuthorizationRequest, MCPAuthorizationRequest
+from context_breach_env.gateway.models import (
+    AuthorizationRequest,
+    MCPAuthorizationRequest,
+    RAGSearchRequest,
+)
 from context_breach_env.gateway.stores import InMemoryNonceStore, NonceStore
 
 
@@ -38,12 +42,17 @@ class HMACIdentityKey:
     tenant_id: str
     user_id: str
     agent_id: str
+    groups: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         if not self.key_id or not self.tenant_id or not self.user_id or not self.agent_id:
             raise ValueError("key identity fields must be non-empty")
         if len(self.secret) < 32:
             raise ValueError("HMAC key secret must contain at least 32 bytes")
+        if any(not group or len(group) > 128 for group in self.groups):
+            raise ValueError(
+                "identity groups must contain non-empty values of at most 128 characters"
+            )
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,7 @@ class AuthenticatedIdentity:
     tenant_id: str
     user_id: str
     agent_id: str
+    groups: frozenset[str] = field(default_factory=frozenset)
 
 
 class AuthenticationError(Exception):
@@ -117,6 +127,14 @@ class HMACRequestAuthenticator:
         payload = canonical_json({"execution_id": execution_id})
         return self._verify("mcp_execution", payload, credentials)
 
+    def verify_retrieval_access(
+        self,
+        retrieval_id: str,
+        credentials: SignedRequestCredentials,
+    ) -> AuthenticatedIdentity:
+        payload = canonical_json({"retrieval_id": retrieval_id})
+        return self._verify("rag_retrieval", payload, credentials)
+
     def verify_mcp_authorization(
         self,
         request: MCPAuthorizationRequest,
@@ -143,6 +161,24 @@ class HMACRequestAuthenticator:
         identity = self._verify(
             "mcp_proxy",
             canonical_mcp_authorization_payload(request),
+            credentials,
+        )
+        if (
+            request.tenant_id != identity.tenant_id
+            or request.user_id != identity.user_id
+            or request.agent_id != identity.agent_id
+        ):
+            raise AuthenticationError("credential_identity_mismatch")
+        return identity
+
+    def verify_rag_search(
+        self,
+        request: RAGSearchRequest,
+        credentials: SignedRequestCredentials,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "rag_search",
+            canonical_rag_search_payload(request),
             credentials,
         )
         if (
@@ -191,6 +227,7 @@ class HMACRequestAuthenticator:
             tenant_id=key.tenant_id,
             user_id=key.user_id,
             agent_id=key.agent_id,
+            groups=key.groups,
         )
 
 
@@ -249,6 +286,22 @@ class HMACRequestSigner:
             issued_at=issued_at,
         )
 
+    def sign_retrieval_access(
+        self,
+        retrieval_id: str,
+        *,
+        ttl_seconds: int = 60,
+        nonce: str | None = None,
+        issued_at: int | None = None,
+    ) -> SignedRequestCredentials:
+        return self._sign(
+            "rag_retrieval",
+            canonical_json({"retrieval_id": retrieval_id}),
+            ttl_seconds=ttl_seconds,
+            nonce=nonce,
+            issued_at=issued_at,
+        )
+
     def sign_mcp_authorization(
         self,
         request: MCPAuthorizationRequest,
@@ -276,6 +329,22 @@ class HMACRequestSigner:
         return self._sign(
             "mcp_proxy",
             canonical_mcp_authorization_payload(request),
+            ttl_seconds=ttl_seconds,
+            nonce=nonce,
+            issued_at=issued_at,
+        )
+
+    def sign_rag_search(
+        self,
+        request: RAGSearchRequest,
+        *,
+        ttl_seconds: int = 60,
+        nonce: str | None = None,
+        issued_at: int | None = None,
+    ) -> SignedRequestCredentials:
+        return self._sign(
+            "rag_search",
+            canonical_rag_search_payload(request),
             ttl_seconds=ttl_seconds,
             nonce=nonce,
             issued_at=issued_at,
@@ -310,6 +379,10 @@ def canonical_authorization_payload(request: AuthorizationRequest) -> bytes:
 
 
 def canonical_mcp_authorization_payload(request: MCPAuthorizationRequest) -> bytes:
+    return canonical_json(request.model_dump(mode="json"))
+
+
+def canonical_rag_search_payload(request: RAGSearchRequest) -> bytes:
     return canonical_json(request.model_dump(mode="json"))
 
 

@@ -6,7 +6,12 @@
       "agent_id": "research-agent",
       "allowed_tools": ["read_document", "search_documents"],
       "review_tools": ["send_email", "http_request"],
-      "resource_patterns": ["documents/*", "mailto:*", "https://approved.example/*"]
+      "resource_patterns": [
+        "documents/*",
+        "mailto:*",
+        "https://approved.example/*",
+        "rag://company-documents"
+      ]
     }
   ],
   "mcp_bindings": [

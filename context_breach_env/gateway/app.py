@@ -25,6 +25,9 @@ from context_breach_env.gateway.models import (
     MCPAuthorizationRequest,
     MCPExecutionAuditRecord,
     MCPProxyResponse,
+    RAGRetrievalAuditRecord,
+    RAGSearchRequest,
+    RAGSearchResponse,
 )
 from context_breach_env.gateway.observability import (
     GatewayMetrics,
@@ -38,10 +41,16 @@ from context_breach_env.gateway.proxy import (
     MCPDownstreamRegistry,
     MCPProxy,
 )
+from context_breach_env.gateway.rag import (
+    PermissionAwareRAGRetriever,
+    RAGCorpusRegistry,
+    RAGRetrievalError,
+)
 from context_breach_env.gateway.stores import (
     GatewayStateError,
     GatewayStateStore,
     InMemoryExecutionAuditStore,
+    InMemoryRetrievalAuditStore,
     SQLiteGatewayStateStore,
 )
 
@@ -78,6 +87,11 @@ def _authenticator_from_environment(
         tenant_id=str(values["tenant_id"]),
         user_id=str(values["user_id"]),
         agent_id=str(values["agent_id"]),
+        groups=frozenset(
+            group.strip()
+            for group in os.getenv("CONTEXT_BREACH_HMAC_GROUPS", "").split(",")
+            if group.strip()
+        ),
     )
     return HMACRequestAuthenticator([key], nonce_store=state_store)
 
@@ -87,6 +101,13 @@ def _mcp_downstreams_from_environment() -> MCPDownstreamRegistry:
     if not path:
         return MCPDownstreamRegistry()
     return MCPDownstreamRegistry.from_file(path)
+
+
+def _rag_corpora_from_environment() -> RAGCorpusRegistry:
+    path = os.getenv("CONTEXT_BREACH_RAG_CORPUS_FILE")
+    if not path:
+        return RAGCorpusRegistry()
+    return RAGCorpusRegistry.from_file(path)
 
 
 def _signed_credentials(
@@ -117,6 +138,7 @@ def create_app(
     metrics: GatewayMetrics | None = None,
     metrics_token: str | None = None,
     mcp_proxy: MCPProxy | None = None,
+    rag_retriever: PermissionAwareRAGRetriever | None = None,
 ) -> FastAPI:
     resolved_state_store = state_store
     if resolved_state_store is None and (service is None or authenticator is None):
@@ -136,6 +158,17 @@ def create_app(
         authorization_service=resolved_service,
         downstreams=_mcp_downstreams_from_environment(),
         execution_store=resolved_execution_store,
+        result_scanner=DefaultMCPResultScanner(),
+    )
+    resolved_retrieval_store = (
+        resolved_state_store
+        if resolved_state_store is not None
+        else InMemoryRetrievalAuditStore()
+    )
+    resolved_rag_retriever = rag_retriever or PermissionAwareRAGRetriever(
+        authorization_service=resolved_service,
+        corpora=_rag_corpora_from_environment(),
+        retrieval_store=resolved_retrieval_store,
         result_scanner=DefaultMCPResultScanner(),
     )
     if resolved_metrics_token is not None and len(resolved_metrics_token) < 32:
@@ -197,6 +230,16 @@ def create_app(
         route_path = getattr(route, "path", "unmatched")
         resolved_metrics.record_state_failure(operation=route_path)
         return JSONResponse(status_code=503, content={"detail": "gateway_state_unavailable"})
+
+    @application.exception_handler(RAGRetrievalError)
+    async def rag_retrieval_error_handler(
+        request: Request,
+        __: RAGRetrievalError,
+    ) -> JSONResponse:
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", "unmatched")
+        resolved_metrics.record_state_failure(operation=route_path)
+        return JSONResponse(status_code=503, content={"detail": "rag_retrieval_unavailable"})
 
     @application.get("/health")
     def health() -> dict[str, str]:
@@ -270,6 +313,22 @@ def create_app(
         )
         return response
 
+    @application.post("/v1/rag/search", response_model=RAGSearchResponse)
+    def search_rag(
+        request: RAGSearchRequest,
+        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+    ) -> RAGSearchResponse:
+        try:
+            identity = resolved_authenticator.verify_rag_search(request, credentials)
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail=error.reason) from error
+        response = resolved_rag_retriever.search(request, identity)
+        resolved_metrics.record_decision(
+            decision=response.authorization.decision.value,
+            reason=response.authorization.reason,
+        )
+        return response
+
     @application.get("/v1/audit/{audit_id}", response_model=AuthorizationAuditRecord)
     def audit_record(
         audit_id: str,
@@ -312,11 +371,36 @@ def create_app(
             raise HTTPException(status_code=404, detail="MCP execution record not found")
         return record
 
+    @application.get(
+        "/v1/rag/retrievals/{retrieval_id}",
+        response_model=RAGRetrievalAuditRecord,
+    )
+    def retrieval_record(
+        retrieval_id: str,
+        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+    ) -> RAGRetrievalAuditRecord:
+        try:
+            identity = resolved_authenticator.verify_retrieval_access(
+                retrieval_id,
+                credentials,
+            )
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail=error.reason) from error
+        record = resolved_rag_retriever.retrieval_store.get_retrieval(retrieval_id)
+        if record is None or (
+            record.tenant_id != identity.tenant_id
+            or record.user_id != identity.user_id
+            or record.agent_id != identity.agent_id
+        ):
+            raise HTTPException(status_code=404, detail="RAG retrieval record not found")
+        return record
+
     application.state.authorization_service = resolved_service
     application.state.request_authenticator = resolved_authenticator
     application.state.gateway_state_store = resolved_state_store
     application.state.gateway_metrics = resolved_metrics
     application.state.mcp_proxy = resolved_mcp_proxy
+    application.state.rag_retriever = resolved_rag_retriever
     return application
 
 

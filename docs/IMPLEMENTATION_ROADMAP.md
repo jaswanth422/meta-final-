@@ -24,6 +24,10 @@
 - [x] Add strict signed MCP `tools/call` authorization and execute-after-permit guard.
 - [x] Add fixed-target server-side MCP `tools/call` forwarding, result scanning, and
       privacy-limited execution audits.
+- [x] Add server-owned document ACL filtering before RAG ranking, purpose-separated
+      signed search, result scanning, and durable retrieval audits.
+- [ ] Replace development HMAC group claims and JSON corpora with OIDC identity,
+      source ACL synchronization, revocation handling, and a private vector index.
 - [ ] Add deployment network isolation, full MCP transports, and workload identity
       propagation so direct downstream bypass is impossible.
 
