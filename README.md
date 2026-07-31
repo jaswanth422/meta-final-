@@ -239,12 +239,13 @@ commit the generated HMAC secret.
 argument names and an intent fingerprint but deliberately exclude argument
 values and raw intent text.
 
-Every authorization and audit request now requires a short-lived HMAC credential
-bound to one tenant/user/agent identity. The signature covers the complete
-request, and a one-time nonce blocks replay across workers and restarts when the
-SQLite state path is configured. See the
-[gateway authentication protocol](docs/GATEWAY_AUTHENTICATION.md) for the exact
-canonical format and threat model.
+Authorization and audit requests accept either a short-lived HMAC credential or
+a configured RS256 JWT access token—never both. HMAC signatures cover the
+complete request and use one-time nonces. The bearer path validates a fixed
+issuer, audience, JWKS signature, token lifetime, tenant/user/group claims, and
+endpoint-specific scopes while keeping `agent_id` server-owned. See the
+[gateway authentication protocol](docs/GATEWAY_AUTHENTICATION.md) and
+[OIDC access-token guide](docs/OIDC_AUTHENTICATION.md) for the exact boundaries.
 
 The [durable storage guide](docs/GATEWAY_STORAGE.md) documents the SQLite schema,
 persistent-volume requirements, backup behavior, and failure guarantees. Without
@@ -289,8 +290,9 @@ security boundary.
 
 MVP boundary: SQLite provides single-host durability, while artifact assessments
 and metrics remain process-local. PostgreSQL for multiple hosts, managed key
-rotation, TLS, distributed tracing, and OIDC/workload identity are still required
-before this gateway can protect real traffic. The proxy currently supports
+rotation, TLS, distributed tracing, multi-issuer policy, bearer revocation, and
+downstream workload identity are still required before this gateway can protect
+real traffic. The proxy currently supports
 request/response JSON-RPC for `tools/call`; MCP initialization, capability
 negotiation, tool discovery, Streamable HTTP/SSE, cancellation, and OS/network
 isolation that prevents direct downstream access remain future work. The RAG path

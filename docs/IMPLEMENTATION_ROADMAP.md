@@ -26,8 +26,10 @@
       privacy-limited execution audits.
 - [x] Add server-owned document ACL filtering before RAG ranking, purpose-separated
       signed search, result scanning, and durable retrieval audits.
-- [ ] Replace development HMAC group claims and JSON corpora with OIDC identity,
-      source ACL synchronization, revocation handling, and a private vector index.
+- [x] Add single-issuer RS256/JWKS access-token verification, trusted group claims,
+      endpoint scopes, and HMAC compatibility.
+- [ ] Replace JSON corpora with source ACL synchronization, revocation handling,
+      and a private vector index; add multi-issuer/workload identity as required.
 - [ ] Add deployment network isolation, full MCP transports, and workload identity
       propagation so direct downstream bypass is impossible.
 

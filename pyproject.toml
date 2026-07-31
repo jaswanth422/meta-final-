@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2",
     "fastapi",
     "uvicorn",
+    "PyJWT[crypto]>=2.12,<3",
 ]
 
 [project.scripts]

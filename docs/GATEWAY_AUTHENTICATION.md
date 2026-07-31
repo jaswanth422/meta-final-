@@ -1,15 +1,20 @@
 # Gateway request authentication
 
-The authorization gateway uses an offline-capable HMAC request credential. A
-server-owned key record binds each `key_id` to exactly one tenant, user, and
-agent. The signature covers the complete authorization request, so changing the
-intent, identity, tool, resource, arguments, or artifact IDs invalidates it.
+The authorization gateway supports an offline-capable HMAC request credential
+and a standards-based JWT access-token path. The two mechanisms are mutually
+exclusive per request. See
+[`OIDC_AUTHENTICATION.md`](OIDC_AUTHENTICATION.md) for issuer, audience, JWKS,
+claim, and scope configuration.
 
-This protocol is an integration MVP, not a replacement for workload identity or
-OIDC. The current environment loader supports one active key; the underlying
-authenticator accepts multiple key IDs for rotation.
+A server-owned key record binds each HMAC `key_id` to exactly one tenant, user,
+and agent. The signature covers the complete authorization request, so changing
+the intent, identity, tool, resource, arguments, or artifact IDs invalidates it.
 
-## Required headers
+The HMAC protocol remains useful for offline integrations. The current
+environment loader supports one active key; the underlying authenticator accepts
+multiple key IDs for rotation.
+
+## HMAC headers
 
 Every `POST /v1/authorize` request must include:
 
@@ -70,6 +75,7 @@ identity binding, and one-time nonce rules.
 The gateway rejects:
 
 - missing or malformed authentication headers;
+- requests that combine HMAC and bearer credentials;
 - unknown key IDs or invalid signatures;
 - credentials that are expired, issued too far in the future, or valid for too long;
 - reuse of a consumed key-ID/nonce pair;
@@ -80,5 +86,6 @@ The gateway rejects:
 SQLite now provides single-host durable nonce and audit state. Artifact
 assessments remain process-local, and multi-host deployments require a shared
 database such as PostgreSQL. Production deployments also need managed secret
-storage and rotation, TLS termination, rate limiting, and preferably OIDC or
-workload-identity verification at the ingress boundary.
+storage and rotation, TLS termination, rate limiting, multi-issuer policy if
+needed, immediate bearer-token revocation strategy, and workload-identity
+propagation to downstream services.

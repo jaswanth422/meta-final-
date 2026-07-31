@@ -645,11 +645,13 @@ dependencies = [
     { name = "fastapi" },
     { name = "openenv-core" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
 ]
 training = [
@@ -666,10 +668,12 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'training'" },
     { name = "datasets", marker = "extra == 'training'" },
     { name = "fastapi" },
+    { name = "httpx", marker = "extra == 'dev'" },
     { name = "matplotlib", marker = "extra == 'training'" },
     { name = "openenv-core" },
     { name = "peft", marker = "extra == 'training'" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.12,<3" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "transformers", marker = "extra == 'training'" },
     { name = "trl", marker = "extra == 'training'", specifier = ">=0.25.0" },

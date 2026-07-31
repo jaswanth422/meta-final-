@@ -13,9 +13,13 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
 from context_breach_env.gateway.auth import (
+    AuthenticationMaterial,
     AuthenticationError,
+    AuthenticationUnavailableError,
+    CompositeRequestAuthenticator,
     HMACIdentityKey,
     HMACRequestAuthenticator,
+    OIDCJWTAuthenticator,
     SignedRequestCredentials,
 )
 from context_breach_env.gateway.models import (
@@ -69,7 +73,7 @@ def _service_from_environment(state_store: GatewayStateStore | None = None) -> A
     return AuthorizationService.from_policy_file(policy_path, audit_store=state_store)
 
 
-def _authenticator_from_environment(
+def _hmac_authenticator_from_environment(
     state_store: GatewayStateStore | None = None,
 ) -> HMACRequestAuthenticator:
     values = {
@@ -96,6 +100,56 @@ def _authenticator_from_environment(
     return HMACRequestAuthenticator([key], nonce_store=state_store)
 
 
+def _environment_flag(name: str, *, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    raise ValueError(f"{name} must be one of true, false, 1, 0, yes, or no")
+
+
+def _oidc_authenticator_from_environment() -> OIDCJWTAuthenticator | None:
+    values = {
+        "issuer": os.getenv("CONTEXT_BREACH_OIDC_ISSUER"),
+        "audience": os.getenv("CONTEXT_BREACH_OIDC_AUDIENCE"),
+        "jwks_url": os.getenv("CONTEXT_BREACH_OIDC_JWKS_URL"),
+        "agent_id": os.getenv("CONTEXT_BREACH_OIDC_AGENT_ID"),
+    }
+    if not any(values.values()):
+        return None
+    if not all(values.values()):
+        missing = sorted(name for name, value in values.items() if not value)
+        raise ValueError(f"incomplete OIDC configuration: {', '.join(missing)}")
+    allow_insecure_http = _environment_flag(
+        "CONTEXT_BREACH_OIDC_ALLOW_INSECURE_HTTP",
+        default=False,
+    )
+    return OIDCJWTAuthenticator(
+        issuer=str(values["issuer"]),
+        audience=str(values["audience"]),
+        jwks_url=str(values["jwks_url"]),
+        agent_id=str(values["agent_id"]),
+        tenant_claim=os.getenv("CONTEXT_BREACH_OIDC_TENANT_CLAIM", "tenant_id"),
+        user_claim=os.getenv("CONTEXT_BREACH_OIDC_USER_CLAIM", "sub"),
+        groups_claim=os.getenv("CONTEXT_BREACH_OIDC_GROUPS_CLAIM", "groups"),
+        scope_claim=os.getenv("CONTEXT_BREACH_OIDC_SCOPE_CLAIM", "scope"),
+        allow_insecure_http=allow_insecure_http,
+    )
+
+
+def _authenticator_from_environment(
+    state_store: GatewayStateStore | None = None,
+) -> CompositeRequestAuthenticator:
+    return CompositeRequestAuthenticator(
+        _hmac_authenticator_from_environment(state_store),
+        _oidc_authenticator_from_environment(),
+    )
+
+
 def _mcp_downstreams_from_environment() -> MCPDownstreamRegistry:
     path = os.getenv("CONTEXT_BREACH_MCP_DOWNSTREAMS_FILE")
     if not path:
@@ -110,30 +164,55 @@ def _rag_corpora_from_environment() -> RAGCorpusRegistry:
     return RAGCorpusRegistry.from_file(path)
 
 
-def _signed_credentials(
+def _authentication_material(
     key_id: Annotated[str | None, Header(alias="X-Context-Key-Id")] = None,
     issued_at: Annotated[str | None, Header(alias="X-Context-Issued-At")] = None,
     expires_at: Annotated[str | None, Header(alias="X-Context-Expires-At")] = None,
     nonce: Annotated[str | None, Header(alias="X-Context-Nonce")] = None,
     signature: Annotated[str | None, Header(alias="X-Context-Signature")] = None,
-) -> SignedRequestCredentials:
-    if None in {key_id, issued_at, expires_at, nonce, signature}:
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> AuthenticationMaterial:
+    signed_values = (key_id, issued_at, expires_at, nonce, signature)
+    has_any_signed = any(value is not None for value in signed_values)
+    has_all_signed = all(value is not None for value in signed_values)
+    if has_any_signed and not has_all_signed:
+        raise HTTPException(status_code=401, detail="malformed_authentication_headers")
+    if has_any_signed and authorization is not None:
+        raise HTTPException(status_code=401, detail="ambiguous_authentication")
+
+    if has_all_signed:
+        try:
+            signed = SignedRequestCredentials(
+                key_id=key_id,
+                issued_at=issued_at,
+                expires_at=expires_at,
+                nonce=nonce,
+                signature=signature,
+            )
+        except ValidationError as error:
+            raise HTTPException(
+                status_code=401,
+                detail="malformed_authentication_headers",
+            ) from error
+        return AuthenticationMaterial(signed=signed)
+
+    if authorization is None:
         raise HTTPException(status_code=401, detail="authentication_required")
-    try:
-        return SignedRequestCredentials(
-            key_id=key_id,
-            issued_at=issued_at,
-            expires_at=expires_at,
-            nonce=nonce,
-            signature=signature,
-        )
-    except ValidationError as error:
-        raise HTTPException(status_code=401, detail="malformed_authentication_headers") from error
+    scheme, separator, token = authorization.partition(" ")
+    if (
+        not separator
+        or scheme.lower() != "bearer"
+        or not token
+        or len(token) > 16_384
+        or any(character.isspace() for character in token)
+    ):
+        raise HTTPException(status_code=401, detail="malformed_bearer_token")
+    return AuthenticationMaterial(bearer_token=token)
 
 
 def create_app(
     service: AuthorizationService | None = None,
-    authenticator: HMACRequestAuthenticator | None = None,
+    authenticator: HMACRequestAuthenticator | CompositeRequestAuthenticator | None = None,
     state_store: GatewayStateStore | None = None,
     metrics: GatewayMetrics | None = None,
     metrics_token: str | None = None,
@@ -144,7 +223,12 @@ def create_app(
     if resolved_state_store is None and (service is None or authenticator is None):
         resolved_state_store = _state_store_from_environment()
     resolved_service = service or _service_from_environment(resolved_state_store)
-    resolved_authenticator = authenticator or _authenticator_from_environment(resolved_state_store)
+    if authenticator is None:
+        resolved_authenticator = _authenticator_from_environment(resolved_state_store)
+    elif isinstance(authenticator, CompositeRequestAuthenticator):
+        resolved_authenticator = authenticator
+    else:
+        resolved_authenticator = CompositeRequestAuthenticator(authenticator)
     resolved_metrics = metrics or GatewayMetrics()
     resolved_metrics_token = (
         os.getenv("CONTEXT_BREACH_METRICS_TOKEN") if metrics_token is None else metrics_token
@@ -241,6 +325,16 @@ def create_app(
         resolved_metrics.record_state_failure(operation=route_path)
         return JSONResponse(status_code=503, content={"detail": "rag_retrieval_unavailable"})
 
+    @application.exception_handler(AuthenticationUnavailableError)
+    async def authentication_unavailable_error_handler(
+        request: Request,
+        error: AuthenticationUnavailableError,
+    ) -> JSONResponse:
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", "unmatched")
+        resolved_metrics.record_state_failure(operation=route_path)
+        return JSONResponse(status_code=503, content={"detail": error.reason})
+
     @application.get("/health")
     def health() -> dict[str, str]:
         if resolved_state_store is not None:
@@ -268,10 +362,10 @@ def create_app(
     @application.post("/v1/authorize", response_model=AuthorizationResponse)
     def authorize(
         request: AuthorizationRequest,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> AuthorizationResponse:
         try:
-            resolved_authenticator.verify_authorization(request, credentials)
+            resolved_authenticator.verify_authorization(request, material)
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
         response = resolved_service.authorize(request)
@@ -284,10 +378,10 @@ def create_app(
     @application.post("/v1/mcp/authorize", response_model=AuthorizationResponse)
     def authorize_mcp(
         request: MCPAuthorizationRequest,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> AuthorizationResponse:
         try:
-            resolved_authenticator.verify_mcp_authorization(request, credentials)
+            resolved_authenticator.verify_mcp_authorization(request, material)
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
         response = resolved_service.authorize_mcp(request)
@@ -300,10 +394,10 @@ def create_app(
     @application.post("/v1/mcp/proxy", response_model=MCPProxyResponse)
     def proxy_mcp(
         request: MCPAuthorizationRequest,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> MCPProxyResponse:
         try:
-            resolved_authenticator.verify_mcp_proxy(request, credentials)
+            resolved_authenticator.verify_mcp_proxy(request, material)
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
         response = resolved_mcp_proxy.execute(request)
@@ -316,10 +410,10 @@ def create_app(
     @application.post("/v1/rag/search", response_model=RAGSearchResponse)
     def search_rag(
         request: RAGSearchRequest,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> RAGSearchResponse:
         try:
-            identity = resolved_authenticator.verify_rag_search(request, credentials)
+            identity = resolved_authenticator.verify_rag_search(request, material)
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
         response = resolved_rag_retriever.search(request, identity)
@@ -332,10 +426,10 @@ def create_app(
     @application.get("/v1/audit/{audit_id}", response_model=AuthorizationAuditRecord)
     def audit_record(
         audit_id: str,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> AuthorizationAuditRecord:
         try:
-            identity = resolved_authenticator.verify_audit_access(audit_id, credentials)
+            identity = resolved_authenticator.verify_audit_access(audit_id, material)
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
         record = resolved_service.audit_record(audit_id)
@@ -353,12 +447,12 @@ def create_app(
     )
     def execution_record(
         execution_id: str,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> MCPExecutionAuditRecord:
         try:
             identity = resolved_authenticator.verify_execution_access(
                 execution_id,
-                credentials,
+                material,
             )
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
@@ -377,12 +471,12 @@ def create_app(
     )
     def retrieval_record(
         retrieval_id: str,
-        credentials: Annotated[SignedRequestCredentials, Depends(_signed_credentials)],
+        material: Annotated[AuthenticationMaterial, Depends(_authentication_material)],
     ) -> RAGRetrievalAuditRecord:
         try:
             identity = resolved_authenticator.verify_retrieval_access(
                 retrieval_id,
-                credentials,
+                material,
             )
         except AuthenticationError as error:
             raise HTTPException(status_code=401, detail=error.reason) from error
