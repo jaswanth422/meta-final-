@@ -5,9 +5,12 @@ import hmac
 import json
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import urlsplit
 
+import jwt
 from pydantic import BaseModel, Field
 
 from context_breach_env.gateway.models import (
@@ -64,10 +67,140 @@ class AuthenticatedIdentity:
     groups: frozenset[str] = field(default_factory=frozenset)
 
 
+@dataclass(frozen=True)
+class AuthenticationMaterial:
+    signed: SignedRequestCredentials | None = None
+    bearer_token: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.signed is None) == (self.bearer_token is None):
+            raise ValueError("exactly one authentication mechanism is required")
+
+
 class AuthenticationError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class AuthenticationUnavailableError(RuntimeError):
+    def __init__(self, reason: str = "identity_provider_unavailable") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+OIDC_REQUIRED_SCOPE = {
+    "authorize": "context:authorize",
+    "audit": "context:audit:read",
+    "mcp_authorize": "context:mcp:authorize",
+    "mcp_proxy": "context:mcp:proxy",
+    "mcp_execution": "context:mcp:audit:read",
+    "rag_search": "context:rag:search",
+    "rag_retrieval": "context:rag:audit:read",
+}
+
+
+class OIDCJWTAuthenticator:
+    """Validates asymmetric JWT access tokens and derives trusted identity claims."""
+
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        audience: str,
+        jwks_url: str,
+        agent_id: str,
+        tenant_claim: str = "tenant_id",
+        user_claim: str = "sub",
+        groups_claim: str = "groups",
+        scope_claim: str = "scope",
+        algorithms: tuple[str, ...] = ("RS256",),
+        leeway_seconds: int = 30,
+        allow_insecure_http: bool = False,
+        signing_key_resolver: Callable[[str], Any] | None = None,
+    ) -> None:
+        _validate_oidc_url(issuer, allow_insecure_http=allow_insecure_http)
+        _validate_oidc_url(jwks_url, allow_insecure_http=allow_insecure_http)
+        if not audience or not agent_id:
+            raise ValueError("OIDC audience and agent ID must be non-empty")
+        claim_names = (tenant_claim, user_claim, groups_claim, scope_claim)
+        if any(not claim or len(claim) > 128 for claim in claim_names):
+            raise ValueError("OIDC claim names must contain 1 to 128 characters")
+        if not algorithms or any(algorithm != "RS256" for algorithm in algorithms):
+            raise ValueError("only the RS256 OIDC signing algorithm is supported")
+        if leeway_seconds < 0 or leeway_seconds > 300:
+            raise ValueError("OIDC leeway must be between 0 and 300 seconds")
+
+        self.issuer = issuer
+        self.audience = audience
+        self.agent_id = agent_id
+        self.tenant_claim = tenant_claim
+        self.user_claim = user_claim
+        self.groups_claim = groups_claim
+        self.scope_claim = scope_claim
+        self.algorithms = algorithms
+        self.leeway_seconds = leeway_seconds
+        if signing_key_resolver is None:
+            jwks_client = jwt.PyJWKClient(
+                jwks_url,
+                cache_keys=True,
+                lifespan=300,
+                timeout=5,
+            )
+            self._signing_key_resolver = (
+                lambda token: jwks_client.get_signing_key_from_jwt(token).key
+            )
+        else:
+            self._signing_key_resolver = signing_key_resolver
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def verify(self, purpose: str, token: str) -> AuthenticatedIdentity:
+        required_scope = OIDC_REQUIRED_SCOPE.get(purpose)
+        if required_scope is None:
+            raise AuthenticationError("unsupported_authentication_purpose")
+        try:
+            header = jwt.get_unverified_header(token)
+            if header.get("alg") not in self.algorithms:
+                raise AuthenticationError("invalid_bearer_token")
+            signing_key = self._signing_key_resolver(token)
+            claims = jwt.decode(
+                token,
+                signing_key,
+                algorithms=list(self.algorithms),
+                audience=self.audience,
+                issuer=self.issuer,
+                leeway=self.leeway_seconds,
+                options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+            )
+        except AuthenticationError:
+            raise
+        except jwt.exceptions.PyJWKClientConnectionError as error:
+            raise AuthenticationUnavailableError() from error
+        except jwt.PyJWTError as error:
+            raise AuthenticationError("invalid_bearer_token") from error
+        except (OSError, TimeoutError) as error:
+            raise AuthenticationUnavailableError() from error
+        except Exception as error:
+            raise AuthenticationError("invalid_bearer_token") from error
+
+        tenant_id = _required_string_claim(claims, self.tenant_claim)
+        user_id = _required_string_claim(claims, self.user_claim)
+        groups = _groups_claim(claims.get(self.groups_claim))
+        scopes = _scopes_claim(claims.get(self.scope_claim))
+        if required_scope not in scopes:
+            raise AuthenticationError("insufficient_token_scope")
+
+        stable_subject = f"{claims['iss']}|{claims['sub']}".encode("utf-8")
+        return AuthenticatedIdentity(
+            key_id=f"oidc:{hashlib.sha256(stable_subject).hexdigest()}",
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=self.agent_id,
+            groups=groups,
+        )
 
 
 class HMACRequestAuthenticator:
@@ -229,6 +362,134 @@ class HMACRequestAuthenticator:
             agent_id=key.agent_id,
             groups=key.groups,
         )
+
+
+class CompositeRequestAuthenticator:
+    """Selects one unambiguous authentication mechanism for every request."""
+
+    def __init__(
+        self,
+        hmac_authenticator: HMACRequestAuthenticator,
+        oidc_authenticator: OIDCJWTAuthenticator | None = None,
+    ) -> None:
+        self.hmac = hmac_authenticator
+        self.oidc = oidc_authenticator
+
+    @property
+    def configured(self) -> bool:
+        return self.hmac.configured or self.oidc is not None
+
+    @property
+    def methods(self) -> tuple[str, ...]:
+        methods = []
+        if self.hmac.configured:
+            methods.append("hmac")
+        if self.oidc is not None:
+            methods.append("oidc")
+        return tuple(methods)
+
+    def verify_authorization(
+        self,
+        request: AuthorizationRequest,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "authorize",
+            material,
+            lambda credentials: self.hmac.verify_authorization(request, credentials),
+        )
+        _require_request_identity(request, identity)
+        return identity
+
+    def verify_audit_access(
+        self,
+        audit_id: str,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        return self._verify(
+            "audit",
+            material,
+            lambda credentials: self.hmac.verify_audit_access(audit_id, credentials),
+        )
+
+    def verify_execution_access(
+        self,
+        execution_id: str,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        return self._verify(
+            "mcp_execution",
+            material,
+            lambda credentials: self.hmac.verify_execution_access(
+                execution_id,
+                credentials,
+            ),
+        )
+
+    def verify_retrieval_access(
+        self,
+        retrieval_id: str,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        return self._verify(
+            "rag_retrieval",
+            material,
+            lambda credentials: self.hmac.verify_retrieval_access(
+                retrieval_id,
+                credentials,
+            ),
+        )
+
+    def verify_mcp_authorization(
+        self,
+        request: MCPAuthorizationRequest,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "mcp_authorize",
+            material,
+            lambda credentials: self.hmac.verify_mcp_authorization(request, credentials),
+        )
+        _require_request_identity(request, identity)
+        return identity
+
+    def verify_mcp_proxy(
+        self,
+        request: MCPAuthorizationRequest,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "mcp_proxy",
+            material,
+            lambda credentials: self.hmac.verify_mcp_proxy(request, credentials),
+        )
+        _require_request_identity(request, identity)
+        return identity
+
+    def verify_rag_search(
+        self,
+        request: RAGSearchRequest,
+        material: AuthenticationMaterial,
+    ) -> AuthenticatedIdentity:
+        identity = self._verify(
+            "rag_search",
+            material,
+            lambda credentials: self.hmac.verify_rag_search(request, credentials),
+        )
+        _require_request_identity(request, identity)
+        return identity
+
+    def _verify(
+        self,
+        purpose: str,
+        material: AuthenticationMaterial,
+        verify_hmac: Callable[[SignedRequestCredentials], AuthenticatedIdentity],
+    ) -> AuthenticatedIdentity:
+        if material.signed is not None:
+            return verify_hmac(material.signed)
+        if self.oidc is None or material.bearer_token is None:
+            raise AuthenticationError("oidc_not_configured")
+        return self.oidc.verify(purpose, material.bearer_token)
 
 
 class HMACRequestSigner:
@@ -409,3 +670,66 @@ def _signature(
         )
     ).encode("utf-8")
     return hmac.new(secret, signing_input, hashlib.sha256).hexdigest()
+
+
+def _validate_oidc_url(value: str, *, allow_insecure_http: bool) -> None:
+    parsed = urlsplit(value)
+    loopback = parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    allowed_scheme = parsed.scheme == "https" or (
+        allow_insecure_http and parsed.scheme == "http" and loopback
+    )
+    if (
+        not allowed_scheme
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("OIDC issuer and JWKS URL must use canonical HTTPS URLs")
+
+
+def _required_string_claim(claims: Mapping[str, Any], claim_name: str) -> str:
+    value = claims.get(claim_name)
+    if not isinstance(value, str) or not value or len(value) > 256:
+        raise AuthenticationError("invalid_bearer_token_claims")
+    return value
+
+
+def _groups_claim(value: Any) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if (
+        not isinstance(value, list)
+        or len(value) > 1_000
+        or any(not isinstance(group, str) or not group or len(group) > 128 for group in value)
+    ):
+        raise AuthenticationError("invalid_bearer_token_claims")
+    return frozenset(value)
+
+
+def _scopes_claim(value: Any) -> frozenset[str]:
+    if isinstance(value, str):
+        scopes = value.split()
+    elif isinstance(value, list):
+        scopes = value
+    else:
+        raise AuthenticationError("invalid_bearer_token_claims")
+    if (
+        len(scopes) > 100
+        or any(not isinstance(scope, str) or not scope or len(scope) > 128 for scope in scopes)
+    ):
+        raise AuthenticationError("invalid_bearer_token_claims")
+    return frozenset(scopes)
+
+
+def _require_request_identity(
+    request: AuthorizationRequest | MCPAuthorizationRequest | RAGSearchRequest,
+    identity: AuthenticatedIdentity,
+) -> None:
+    if (
+        request.tenant_id != identity.tenant_id
+        or request.user_id != identity.user_id
+        or request.agent_id != identity.agent_id
+    ):
+        raise AuthenticationError("credential_identity_mismatch")

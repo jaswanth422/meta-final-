@@ -6,7 +6,8 @@
 unauthorized chunks from entering relevance ranking or model context. It combines
 four independent controls:
 
-1. a purpose-separated, replay-resistant `rag_search` HMAC signature;
+1. either a purpose-separated, replay-resistant `rag_search` HMAC signature or
+   an OIDC/OAuth bearer token with `context:rag:search`;
 2. the existing `search_documents` tool and `rag://<corpus>` resource policy;
 3. server-owned user/group claims matched against chunk ACL metadata before ranking;
 4. result scanning and an append-only, content-free retrieval audit.
@@ -34,8 +35,8 @@ same tenant. The corpus file is trusted configuration: clients cannot submit ACL
 groups, document contents, or an alternate storage endpoint in a search request.
 
 `CONTEXT_BREACH_HMAC_GROUPS` is a comma-separated development-only source of group
-claims. It is loaded with the signing key on the server and is not accepted in the
-request body.
+claims. With OIDC enabled, groups come from a verified JWT claim instead. Neither
+mechanism accepts groups in the request body.
 
 ## Local smoke run
 
@@ -116,7 +117,8 @@ retrieval audit tables append-only.
 
 This implementation does **not** provide:
 
-- OIDC, SAML, Entra ID, Okta, or Keycloak identity verification;
+- automatic OIDC discovery, interactive login, multi-issuer routing, or opaque
+  access-token introspection;
 - live group resolution or source ACL synchronization;
 - SharePoint, Google Drive, Confluence, or filesystem connectors;
 - vector, hybrid, semantic, or reranker retrieval;
@@ -126,7 +128,7 @@ This implementation does **not** provide:
 - network isolation preventing direct access to the corpus;
 - authorization-aware generation or citation verification.
 
-The next production milestone is an OIDC identity adapter plus an ACL-sync
-connector whose revocation tests prove that permission changes reach every derived
-chunk and cache. Until that exists, the JSON corpus is a controlled security test
-fixture, not an enterprise document system.
+The next production milestone is an ACL-sync connector whose revocation tests
+prove that permission changes reach every derived chunk and cache. Until that
+exists, the JSON corpus is a controlled security test fixture, not an enterprise
+document system.
