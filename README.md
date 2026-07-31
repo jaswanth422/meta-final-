@@ -278,13 +278,25 @@ Downstream bearer tokens are resolved from environment variables named by the
 trusted `CONTEXT_BREACH_MCP_DOWNSTREAMS_FILE`; clients cannot supply a target URL or
 credential. The example is `config/mcp-downstreams.example.json`.
 
+`POST /v1/rag/search` adds a permission-aware retrieval foundation. The gateway
+derives user/group claims from server-owned identity configuration, authorizes the
+`search_documents` action, filters every chunk by tenant and document ACL before
+lexical ranking, scans selected content before release, and appends a durable audit
+without raw queries or document content. The local corpus example is
+`config/rag-corpus.example.json`; see the
+[RAG access-control guide](docs/RAG_ACCESS_CONTROL.md) for the smoke test and exact
+security boundary.
+
 MVP boundary: SQLite provides single-host durability, while artifact assessments
 and metrics remain process-local. PostgreSQL for multiple hosts, managed key
 rotation, TLS, distributed tracing, and OIDC/workload identity are still required
 before this gateway can protect real traffic. The proxy currently supports
 request/response JSON-RPC for `tools/call`; MCP initialization, capability
 negotiation, tool discovery, Streamable HTTP/SSE, cancellation, and OS/network
-isolation that prevents direct downstream access remain future work.
+isolation that prevents direct downstream access remain future work. The RAG path
+uses a trusted JSON fixture and exact ACL metadata with lexical ranking; it does not
+yet synchronize source permissions, resolve enterprise identities, invalidate
+revoked caches, or provide a production vector index.
 
 ---
 

@@ -10,7 +10,11 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from context_breach_env.gateway.models import AuthorizationAuditRecord, MCPExecutionAuditRecord
+from context_breach_env.gateway.models import (
+    AuthorizationAuditRecord,
+    MCPExecutionAuditRecord,
+    RAGRetrievalAuditRecord,
+)
 
 
 class GatewayStateError(RuntimeError):
@@ -29,11 +33,23 @@ class ExecutionAuditStore(Protocol):
     def get_execution(self, execution_id: str) -> MCPExecutionAuditRecord | None: ...
 
 
+class RetrievalAuditStore(Protocol):
+    def append_retrieval(self, record: RAGRetrievalAuditRecord) -> None: ...
+
+    def get_retrieval(self, retrieval_id: str) -> RAGRetrievalAuditRecord | None: ...
+
+
 class NonceStore(Protocol):
     def consume_nonce(self, *, key_id: str, nonce: str, expires_at: int, now: int) -> bool: ...
 
 
-class GatewayStateStore(AuditStore, ExecutionAuditStore, NonceStore, Protocol):
+class GatewayStateStore(
+    AuditStore,
+    ExecutionAuditStore,
+    RetrievalAuditStore,
+    NonceStore,
+    Protocol,
+):
     def health_check(self) -> None: ...
 
 
@@ -90,13 +106,32 @@ class InMemoryExecutionAuditStore:
             return record.model_copy(deep=True) if record is not None else None
 
 
+class InMemoryRetrievalAuditStore:
+    def __init__(self) -> None:
+        self._records: dict[str, RAGRetrievalAuditRecord] = {}
+        self._lock = threading.Lock()
+
+    def append_retrieval(self, record: RAGRetrievalAuditRecord) -> None:
+        with self._lock:
+            if record.retrieval_id in self._records:
+                raise GatewayStateError("duplicate retrieval ID")
+            self._records[record.retrieval_id] = record.model_copy(deep=True)
+
+    def get_retrieval(self, retrieval_id: str) -> RAGRetrievalAuditRecord | None:
+        with self._lock:
+            record = self._records.get(retrieval_id)
+            return record.model_copy(deep=True) if record is not None else None
+
+
 class InMemoryGatewayStateStore:
     def __init__(self) -> None:
         self._records: dict[str, AuthorizationAuditRecord] = {}
         self._execution_records: dict[str, MCPExecutionAuditRecord] = {}
+        self._retrieval_records: dict[str, RAGRetrievalAuditRecord] = {}
         self._used: dict[tuple[str, str], int] = {}
         self._audit_lock = threading.Lock()
         self._execution_lock = threading.Lock()
+        self._retrieval_lock = threading.Lock()
         self._nonce_lock = threading.Lock()
 
     def append_audit(self, record: AuthorizationAuditRecord) -> None:
@@ -121,6 +156,17 @@ class InMemoryGatewayStateStore:
             record = self._execution_records.get(execution_id)
             return record.model_copy(deep=True) if record is not None else None
 
+    def append_retrieval(self, record: RAGRetrievalAuditRecord) -> None:
+        with self._retrieval_lock:
+            if record.retrieval_id in self._retrieval_records:
+                raise GatewayStateError("duplicate retrieval ID")
+            self._retrieval_records[record.retrieval_id] = record.model_copy(deep=True)
+
+    def get_retrieval(self, retrieval_id: str) -> RAGRetrievalAuditRecord | None:
+        with self._retrieval_lock:
+            record = self._retrieval_records.get(retrieval_id)
+            return record.model_copy(deep=True) if record is not None else None
+
     def consume_nonce(self, *, key_id: str, nonce: str, expires_at: int, now: int) -> bool:
         nonce_key = (key_id, nonce)
         with self._nonce_lock:
@@ -141,7 +187,7 @@ class InMemoryGatewayStateStore:
 class SQLiteGatewayStateStore:
     """Single-host durable state with atomic cross-process nonce consumption."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: str | Path, *, timeout_seconds: float = 5.0) -> None:
         if timeout_seconds <= 0:
@@ -236,6 +282,50 @@ class SQLiteGatewayStateStore:
         except (ValidationError, ValueError, TypeError) as error:
             raise GatewayStateError("stored MCP execution record is invalid") from error
 
+    def append_retrieval(self, record: RAGRetrievalAuditRecord) -> None:
+        payload = record.model_dump_json()
+        try:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO gateway_rag_retrieval_records (
+                        retrieval_id, authorization_audit_id, tenant_id, user_id,
+                        agent_id, record_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.retrieval_id,
+                        record.authorization_audit_id,
+                        record.tenant_id,
+                        record.user_id,
+                        record.agent_id,
+                        payload,
+                        record.timestamp.isoformat(),
+                    ),
+                )
+        except sqlite3.Error as error:
+            raise GatewayStateError("failed to append RAG retrieval record") from error
+
+    def get_retrieval(self, retrieval_id: str) -> RAGRetrievalAuditRecord | None:
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT record_json
+                    FROM gateway_rag_retrieval_records
+                    WHERE retrieval_id = ?
+                    """,
+                    (retrieval_id,),
+                ).fetchone()
+        except sqlite3.Error as error:
+            raise GatewayStateError("failed to read RAG retrieval record") from error
+        if row is None:
+            return None
+        try:
+            return RAGRetrievalAuditRecord.model_validate_json(row["record_json"])
+        except (ValidationError, ValueError, TypeError) as error:
+            raise GatewayStateError("stored RAG retrieval record is invalid") from error
+
     def consume_nonce(self, *, key_id: str, nonce: str, expires_at: int, now: int) -> bool:
         connection = self._connect()
         try:
@@ -263,6 +353,7 @@ class SQLiteGatewayStateStore:
             with self._connection() as connection:
                 connection.execute("SELECT 1 FROM gateway_audit_records LIMIT 1").fetchone()
                 connection.execute("SELECT 1 FROM gateway_mcp_execution_records LIMIT 1").fetchone()
+                connection.execute("SELECT 1 FROM gateway_rag_retrieval_records LIMIT 1").fetchone()
                 connection.execute("SELECT 1 FROM gateway_nonces LIMIT 1").fetchone()
         except sqlite3.Error as error:
             raise GatewayStateError("gateway state health check failed") from error
@@ -309,6 +400,18 @@ class SQLiteGatewayStateStore:
                             REFERENCES gateway_audit_records(audit_id)
                     );
 
+                    CREATE TABLE IF NOT EXISTS gateway_rag_retrieval_records (
+                        retrieval_id TEXT PRIMARY KEY,
+                        authorization_audit_id TEXT NOT NULL,
+                        tenant_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        agent_id TEXT NOT NULL,
+                        record_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY (authorization_audit_id)
+                            REFERENCES gateway_audit_records(audit_id)
+                    );
+
                     CREATE TRIGGER IF NOT EXISTS gateway_audit_no_update
                     BEFORE UPDATE ON gateway_audit_records
                     BEGIN
@@ -333,7 +436,19 @@ class SQLiteGatewayStateStore:
                         SELECT RAISE(ABORT, 'MCP execution records are append-only');
                     END;
 
-                    PRAGMA user_version = 2;
+                    CREATE TRIGGER IF NOT EXISTS gateway_rag_retrieval_no_update
+                    BEFORE UPDATE ON gateway_rag_retrieval_records
+                    BEGIN
+                        SELECT RAISE(ABORT, 'RAG retrieval records are append-only');
+                    END;
+
+                    CREATE TRIGGER IF NOT EXISTS gateway_rag_retrieval_no_delete
+                    BEFORE DELETE ON gateway_rag_retrieval_records
+                    BEGIN
+                        SELECT RAISE(ABORT, 'RAG retrieval records are append-only');
+                    END;
+
+                    PRAGMA user_version = 3;
                     """
                 )
             os.chmod(self.path, 0o600)

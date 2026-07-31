@@ -17,14 +17,16 @@ memory for development. `GET /health` reports `"storage":"sqlite"` or
 
 ## Guarantees
 
-The version-1 schema provides:
+The version-3 schema provides:
 
 - a unique `(key_id, nonce)` primary key;
 - atomic nonce consumption using `BEGIN IMMEDIATE`;
 - expired-nonce cleanup inside the same transaction;
 - WAL mode, a busy timeout, and full synchronous writes;
-- audit records that contain no raw intent or argument values;
-- database triggers that reject audit updates and deletions;
+- authorization audits without raw intent or argument values;
+- MCP execution audits without downstream response contents;
+- RAG retrieval audits without raw queries or chunk contents;
+- database triggers that reject updates and deletions across all three audit tables;
 - fail-closed `503 gateway_state_unavailable` responses on storage errors.
 
 The nonce uniqueness constraint is shared by multiple gateway worker processes
@@ -51,7 +53,8 @@ provide:
 - retention, archival, or legal-hold workflows;
 - cryptographic chaining or external notarization of audit records;
 - durable artifact assessments (artifact risk state is still process-local);
-- automatic schema migration beyond version 1;
+- a general migration framework or downgrade support beyond the additive startup
+  initialization used through schema version 3;
 - managed encryption at rest or managed backups.
 
 The append-only triggers prevent normal SQL modification, but a filesystem or

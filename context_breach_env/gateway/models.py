@@ -135,3 +135,82 @@ class MCPExecutionAuditRecord(BaseModel):
     result_sha256: str | None = None
     failure_reason: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RAGSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    agent_id: str = Field(min_length=1, max_length=128)
+    user_intent: str = Field(min_length=1, max_length=2_000)
+    corpus_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    query: str = Field(min_length=1, max_length=2_000)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class RAGChunk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str = Field(min_length=1, max_length=128)
+    document_id: str = Field(min_length=1, max_length=256)
+    document_version: str = Field(min_length=1, max_length=128)
+    chunk_id: str = Field(min_length=1, max_length=256)
+    content: str = Field(min_length=1, max_length=100_000)
+    allowed_users: frozenset[str] = Field(default_factory=frozenset, max_length=1_000)
+    allowed_groups: frozenset[str] = Field(default_factory=frozenset, max_length=1_000)
+    classification: Literal["public", "internal", "confidential", "restricted"]
+    acl_version: str = Field(min_length=1, max_length=128)
+
+
+class RAGCorpus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    corpus_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    chunks: list[RAGChunk] = Field(default_factory=list, max_length=100_000)
+
+
+class RAGCorporaDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    corpora: list[RAGCorpus] = Field(default_factory=list, max_length=100)
+
+
+class RAGSearchHit(BaseModel):
+    document_id: str
+    document_version: str
+    chunk_id: str
+    content: str
+    classification: Literal["public", "internal", "confidential", "restricted"]
+    relevance_score: float = Field(ge=0.0, le=1.0)
+
+
+class RAGSearchResponse(BaseModel):
+    authorization: AuthorizationResponse
+    retrieval_id: str | None = None
+    status: Literal["not_executed", "succeeded", "response_blocked"]
+    results: list[RAGSearchHit] = Field(default_factory=list)
+
+
+class RAGRetrievalAuditRecord(BaseModel):
+    retrieval_id: str
+    authorization_audit_id: str
+    tenant_id: str
+    user_id: str
+    agent_id: str
+    corpus_name: str
+    query_sha256: str
+    status: Literal["succeeded", "response_blocked"]
+    returned_document_ids: list[str] = Field(default_factory=list)
+    returned_chunk_ids: list[str] = Field(default_factory=list)
+    acl_versions: list[str] = Field(default_factory=list)
+    failure_reason: str | None = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
