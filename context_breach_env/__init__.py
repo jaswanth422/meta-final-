@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-from context_breach_env.client import ContextBreachEnv
 from context_breach_env.integrations import (
     AgentMessage,
     AgentWorkflowGuard,
@@ -10,15 +8,6 @@ from context_breach_env.models import ContextBreachAction, ContextBreachObservat
 from context_breach_env.sdk import ContextBreachGuard, GuardResult, UnsafeAgentAction
 from context_breach_env.server.context_breach_environment import ContextBreachEnvironment
 
-
-__all__ = [
-    "AgentMessage",
-    "AgentWorkflowGuard",
-    "ContextBreachGuard",
-=======
-from context_breach_env.models import ContextBreachAction, ContextBreachObservation
-from context_breach_env.server.context_breach_environment import ContextBreachEnvironment
-
 try:
     from context_breach_env.client import ContextBreachEnv
 except ImportError:
@@ -26,18 +15,15 @@ except ImportError:
 
 
 __all__ = [
->>>>>>> c6e86ec4e1ad9ca08323829b5f6a5d52af2c9178
+    "AgentMessage",
+    "AgentWorkflowGuard",
     "ContextBreachAction",
     "ContextBreachEnv",
     "ContextBreachEnvironment",
+    "ContextBreachGuard",
     "ContextBreachObservation",
-<<<<<<< HEAD
     "GuardResult",
     "RuntimeDecision",
     "ToolCall",
     "UnsafeAgentAction",
 ]
-=======
-]
-
->>>>>>> c6e86ec4e1ad9ca08323829b5f6a5d52af2c9178
