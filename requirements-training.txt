@@ -1,0 +1,8 @@
+trl>=0.25.0
+transformers @ git+https://github.com/huggingface/transformers.git@main
+datasets
+accelerate
+peft
+openenv-core[core]>=0.2.1
+matplotlib
+torch

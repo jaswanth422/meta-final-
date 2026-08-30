@@ -1,0 +1,17 @@
+gateway:
+  rate_limit_per_source_per_minute: 60
+  max_artifact_bytes: 524288
+  dedup_window_seconds: 300
+
+risk_scorer:
+  high_threshold: 0.80
+  medium_threshold: 0.50
+  weights:
+    static_score: 0.40
+    semantic_score: 0.60
+
+production:
+  require_managed_signing_key: true
+  high_stakes_actions:
+    - finalize_response
+  audit_retention_days: 90

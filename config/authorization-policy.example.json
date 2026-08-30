@@ -1,0 +1,34 @@
+{
+  "grants": [
+    {
+      "tenant_id": "demo-tenant",
+      "user_id": "analyst-1",
+      "agent_id": "research-agent",
+      "allowed_tools": ["read_document", "search_documents"],
+      "review_tools": ["send_email", "http_request"],
+      "resource_patterns": [
+        "documents/*",
+        "mailto:*",
+        "https://approved.example/*",
+        "rag://company-documents"
+      ]
+    }
+  ],
+  "mcp_bindings": [
+    {
+      "server_name": "filesystem",
+      "mcp_tool_name": "read_document",
+      "policy_tool_name": "read_document",
+      "resource_argument": "path",
+      "resource_kind": "path",
+      "resource_prefix": "documents"
+    },
+    {
+      "server_name": "mail",
+      "mcp_tool_name": "send",
+      "policy_tool_name": "send_email",
+      "resource_argument": "recipient",
+      "resource_kind": "email"
+    }
+  ]
+}

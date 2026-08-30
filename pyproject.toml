@@ -1,0 +1,39 @@
+[project]
+name = "context-breach-env"
+version = "0.2.0"
+description = "OpenEnv prompt-injection simulator with an enforce-before-execute production security layer."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core",
+    "pydantic>=2",
+    "fastapi",
+    "uvicorn",
+    "PyJWT[crypto]>=2.12,<3",
+]
+
+[project.scripts]
+server = "context_breach_env.server.cli:main"
+context-breach-gateway = "context_breach_env.gateway.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+]
+training = [
+    "trl>=0.25.0",
+    "transformers",
+    "datasets",
+    "accelerate",
+    "peft",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+include = ["context_breach_env*"]
+exclude = ["space*", "server*", "results*", "notebooks*", "scripts*", "tests*", "outputs*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

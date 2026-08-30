@@ -1,0 +1,42 @@
+{
+  "corpora": [
+    {
+      "corpus_name": "company-documents",
+      "chunks": [
+        {
+          "tenant_id": "demo-tenant",
+          "document_id": "employee-handbook",
+          "document_version": "2026-07",
+          "chunk_id": "employee-handbook-001",
+          "content": "Employees can request annual leave through the company HR portal.",
+          "allowed_users": [],
+          "allowed_groups": [],
+          "classification": "public",
+          "acl_version": "acl-2026-07-01"
+        },
+        {
+          "tenant_id": "demo-tenant",
+          "document_id": "finance-forecast",
+          "document_version": "2026-q3",
+          "chunk_id": "finance-forecast-001",
+          "content": "The confidential finance forecast covers quarterly revenue and operating margin.",
+          "allowed_users": [],
+          "allowed_groups": ["finance"],
+          "classification": "confidential",
+          "acl_version": "acl-2026-07-15"
+        },
+        {
+          "tenant_id": "demo-tenant",
+          "document_id": "board-plan",
+          "document_version": "7",
+          "chunk_id": "board-plan-001",
+          "content": "The restricted board plan describes the acquisition schedule.",
+          "allowed_users": ["analyst-1"],
+          "allowed_groups": [],
+          "classification": "restricted",
+          "acl_version": "acl-2026-07-20"
+        }
+      ]
+    }
+  ]
+}

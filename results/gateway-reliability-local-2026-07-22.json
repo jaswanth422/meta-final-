@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "status": "local_development_measurement_not_production_benchmark",
+  "environment": {
+    "architecture": "arm64",
+    "operating_system": "macOS 26.5.1",
+    "python": "3.14.2",
+    "fastapi": "0.123.10",
+    "uvicorn": "0.40.0",
+    "server_workers": 1,
+    "transport": "HTTP loopback",
+    "state_backend": "SQLite on local temporary filesystem",
+    "request_logging": "enabled",
+    "uvicorn_access_logging": "disabled"
+  },
+  "workload": {
+    "authentication": "HMAC-SHA256 with unique nonce per request",
+    "decision": "permit",
+    "requests_per_trial": 200,
+    "durable_audit_write_per_request": true
+  },
+  "trials": [
+    {
+      "concurrency": 1,
+      "completed": 200,
+      "expected_decisions": 200,
+      "unique_audit_ids": 200,
+      "errors": 0,
+      "throughput_rps": 412.506,
+      "latency_ms": {
+        "mean": 2.410,
+        "p50": 2.174,
+        "p95": 3.601,
+        "p99": 6.762,
+        "max": 16.080
+      }
+    },
+    {
+      "concurrency": 8,
+      "completed": 200,
+      "expected_decisions": 200,
+      "unique_audit_ids": 200,
+      "errors": 0,
+      "throughput_rps": 268.208,
+      "latency_ms": {
+        "mean": 29.362,
+        "p50": 3.698,
+        "p95": 74.839,
+        "p99": 532.674,
+        "max": 542.386
+      }
+    },
+    {
+      "concurrency": 8,
+      "completed": 200,
+      "expected_decisions": 200,
+      "unique_audit_ids": 200,
+      "errors": 0,
+      "throughput_rps": 292.041,
+      "latency_ms": {
+        "mean": 26.589,
+        "p50": 3.346,
+        "p95": 41.525,
+        "p99": 515.636,
+        "max": 571.723
+      }
+    }
+  ],
+  "conclusion": "Correctness held, but SQLite write contention caused repeatable 500ms-plus p99 latency at concurrency 8. This backend is not suitable for strict-tail or multi-host production workloads."
+}
