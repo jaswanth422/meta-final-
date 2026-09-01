@@ -7,7 +7,13 @@ from typing import Any
 
 
 _EXPORTS = {
+    "AgentMessage": ("context_breach_env.integrations", "AgentMessage"),
+    "AgentWorkflowGuard": (
+        "context_breach_env.integrations",
+        "AgentWorkflowGuard",
+    ),
     "ContextBreachAction": ("context_breach_env.models", "ContextBreachAction"),
+    "ContextBreachEnv": ("context_breach_env.client", "ContextBreachEnv"),
     "ContextBreachObservation": (
         "context_breach_env.models",
         "ContextBreachObservation",
@@ -16,7 +22,11 @@ _EXPORTS = {
         "context_breach_env.server.context_breach_environment",
         "ContextBreachEnvironment",
     ),
-    "ContextBreachEnv": ("context_breach_env.client", "ContextBreachEnv"),
+    "ContextBreachGuard": ("context_breach_env.sdk", "ContextBreachGuard"),
+    "GuardResult": ("context_breach_env.sdk", "GuardResult"),
+    "RuntimeDecision": ("context_breach_env.integrations", "RuntimeDecision"),
+    "ToolCall": ("context_breach_env.integrations", "ToolCall"),
+    "UnsafeAgentAction": ("context_breach_env.sdk", "UnsafeAgentAction"),
 }
 
 
