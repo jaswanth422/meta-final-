@@ -1,0 +1,32 @@
+{
+  "source_id": "local-company-files",
+  "corpora": [
+    {
+      "corpus_name": "company-documents",
+      "documents": [
+        {
+          "tenant_id": "demo-tenant",
+          "document_id": "employee-handbook",
+          "document_version": "2026-09",
+          "content_path": "employee-handbook.txt",
+          "classification": "public",
+          "allowed_users": [],
+          "allowed_groups": [],
+          "acl_version": "acl-2026-09-01",
+          "deleted": false
+        },
+        {
+          "tenant_id": "demo-tenant",
+          "document_id": "finance-forecast",
+          "document_version": "2026-q3",
+          "content_path": "finance-forecast.txt",
+          "classification": "confidential",
+          "allowed_users": [],
+          "allowed_groups": ["finance"],
+          "acl_version": "acl-2026-09-01",
+          "deleted": false
+        }
+      ]
+    }
+  ]
+}

@@ -286,7 +286,11 @@ lexical ranking, scans selected content before release, and appends a durable au
 without raw queries or document content. The local corpus example is
 `config/rag-corpus.example.json`; see the
 [RAG access-control guide](docs/RAG_ACCESS_CONTROL.md) for the smoke test and exact
-security boundary.
+security boundary. A local ACL-sync path is also available through
+`config/rag-acl-manifest.example.json`: it confines file access to a configured
+root, derives ACL-bearing chunks, atomically refreshes corpus revisions, removes
+tombstoned content, invalidates cached retrievals, and fails closed when the
+authoritative source cannot be validated.
 
 MVP boundary: SQLite provides single-host durability, while artifact assessments
 and metrics remain process-local. PostgreSQL for multiple hosts, managed key
@@ -296,9 +300,10 @@ real traffic. The proxy currently supports
 request/response JSON-RPC for `tools/call`; MCP initialization, capability
 negotiation, tool discovery, Streamable HTTP/SSE, cancellation, and OS/network
 isolation that prevents direct downstream access remain future work. The RAG path
-uses a trusted JSON fixture and exact ACL metadata with lexical ranking; it does not
-yet synchronize source permissions, resolve enterprise identities, invalidate
-revoked caches, or provide a production vector index.
+can use either a trusted JSON fixture or the automatically refreshed local ACL
+manifest connector, but it does not yet consume SharePoint/Google Drive change
+feeds, resolve enterprise identities, support multi-source corpus ownership, or
+provide a production vector index.
 
 ---
 
