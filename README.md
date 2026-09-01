@@ -264,6 +264,106 @@ Competitive claims should include:
 - p50/p95/p99 latency
 - repeated hardware-specific measurements
 
+The Qwen baseline is therefore not suitable as the primary blocking detector.
+The product path uses deterministic authorization and provenance controls, with
+detectors treated as replaceable risk signals.
+
+## Authorization gateway MVP
+
+The separate FastAPI gateway evaluates agent tool calls against server-owned
+identity grants, resource patterns, artifact assessments, and sensitive-data
+rules. With no policy file configured it fails closed.
+
+```bash
+export CONTEXT_BREACH_POLICY_FILE=config/authorization-policy.example.json
+export CONTEXT_BREACH_DATABASE_PATH=./var/gateway.sqlite3
+export CONTEXT_BREACH_HMAC_KEY_ID=local-demo-v1
+export CONTEXT_BREACH_HMAC_SECRET="$(openssl rand -hex 32)"
+export CONTEXT_BREACH_HMAC_TENANT_ID=demo-tenant
+export CONTEXT_BREACH_HMAC_USER_ID=analyst-1
+export CONTEXT_BREACH_HMAC_AGENT_ID=research-agent
+export CONTEXT_BREACH_METRICS_TOKEN="$(openssl rand -hex 32)"
+context-breach-gateway
+```
+
+Provide the same untracked environment values to a second terminal, then run
+`python scripts/smoke_signed_gateway.py --mode permit` or `--mode deny`. Never
+commit the generated HMAC secret.
+
+`POST /v1/authorize` accepts `tenant_id`, `user_id`, `agent_id`, `user_intent`,
+`tool_name`, `resource`, `arguments`, and `artifact_ids`. It returns `permit`,
+`deny`, or `require_review`, plus a reason and audit ID. Audit records retain
+argument names and an intent fingerprint but deliberately exclude argument
+values and raw intent text.
+
+Authorization and audit requests accept either a short-lived HMAC credential or
+a configured RS256 JWT access token—never both. HMAC signatures cover the
+complete request and use one-time nonces. The bearer path validates a fixed
+issuer, audience, JWKS signature, token lifetime, tenant/user/group claims, and
+endpoint-specific scopes while keeping `agent_id` server-owned. See the
+[gateway authentication protocol](docs/GATEWAY_AUTHENTICATION.md) and
+[OIDC access-token guide](docs/OIDC_AUTHENTICATION.md) for the exact boundaries.
+
+The [durable storage guide](docs/GATEWAY_STORAGE.md) documents the SQLite schema,
+persistent-volume requirements, backup behavior, and failure guarantees. Without
+`CONTEXT_BREACH_DATABASE_PATH`, the gateway reports and uses an in-memory
+development fallback.
+
+`GET /metrics` exposes bounded-cardinality request, decision, authentication,
+state-failure, and latency metrics only when presented with the separate metrics
+bearer token. Every response also carries a generated `X-Request-ID`, and completed
+requests emit privacy-limited structured JSON logs. See the
+[gateway observability guide](docs/GATEWAY_OBSERVABILITY.md) for scrape commands,
+the exact metric contract, privacy guarantees, and process-local limitations.
+
+The [gateway reliability guide](docs/GATEWAY_RELIABILITY.md) provides a concurrent
+signed-request harness, correctness and latency gates, failure-recovery semantics,
+and tracked local measurements. The current SQLite backend preserved all decisions
+and audits but exceeded 500 ms p99 latency in repeated eight-way-concurrency trials;
+it is not presented as a multi-host or strict-tail production store.
+
+`POST /v1/mcp/authorize` adds strict, signed authorization for MCP `tools/call`
+requests. Server-owned bindings derive policy resources from designated arguments,
+and the reference interceptor executes downstream only after `permit`. See the
+[MCP tool interception guide](docs/MCP_TOOL_INTERCEPTION.md) for configuration,
+path/URL/email canonicalization, smoke commands, and the explicit bypass boundary.
+
+`POST /v1/mcp/proxy` is the first server-side enforcement path. It requires a
+purpose-separated execution signature, authorizes an immutable request snapshot,
+forwards only permitted calls to a fixed server-owned downstream URL, scans the
+JSON-RPC result before release, and appends a privacy-limited execution record.
+Downstream bearer tokens are resolved from environment variables named by the
+trusted `CONTEXT_BREACH_MCP_DOWNSTREAMS_FILE`; clients cannot supply a target URL or
+credential. The example is `config/mcp-downstreams.example.json`.
+
+`POST /v1/rag/search` adds a permission-aware retrieval foundation. The gateway
+derives user/group claims from server-owned identity configuration, authorizes the
+`search_documents` action, filters every chunk by tenant and document ACL before
+lexical ranking, scans selected content before release, and appends a durable audit
+without raw queries or document content. The local corpus example is
+`config/rag-corpus.example.json`; see the
+[RAG access-control guide](docs/RAG_ACCESS_CONTROL.md) for the smoke test and exact
+security boundary. A local ACL-sync path is also available through
+`config/rag-acl-manifest.example.json`: it confines file access to a configured
+root, derives ACL-bearing chunks, atomically refreshes corpus revisions, removes
+tombstoned content, invalidates cached retrievals, and fails closed when the
+authoritative source cannot be validated.
+
+MVP boundary: SQLite provides single-host durability, while artifact assessments
+and metrics remain process-local. PostgreSQL for multiple hosts, managed key
+rotation, TLS, distributed tracing, multi-issuer policy, bearer revocation, and
+downstream workload identity are still required before this gateway can protect
+real traffic. The proxy currently supports
+request/response JSON-RPC for `tools/call`; MCP initialization, capability
+negotiation, tool discovery, Streamable HTTP/SSE, cancellation, and OS/network
+isolation that prevents direct downstream access remain future work. The RAG path
+can use either a trusted JSON fixture or the automatically refreshed local ACL
+manifest connector, but it does not yet consume SharePoint/Google Drive change
+feeds, resolve enterprise identities, support multi-source corpus ownership, or
+provide a production vector index.
+
+---
+
 ## Repository Layout
 
 ```text

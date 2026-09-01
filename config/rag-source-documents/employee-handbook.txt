@@ -1,0 +1,3 @@
+Employees request annual leave through the company HR portal.
+
+The handbook is available to every authenticated employee in the tenant.

@@ -325,6 +325,7 @@ def test_retrieval_audit_hashes_query_and_records_acl_snapshot_without_content()
     record = store.get_retrieval(body["retrieval_id"])
     assert record is not None
     assert record.returned_document_ids == ["finance-forecast"]
+    assert record.returned_document_versions == ["v1"]
     assert record.returned_chunk_ids == ["finance-1"]
     assert record.acl_versions == ["finance-acl-v7"]
     serialized = record.model_dump_json()

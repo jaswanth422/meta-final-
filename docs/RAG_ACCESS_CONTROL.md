@@ -38,6 +38,41 @@ groups, document contents, or an alternate storage endpoint in a search request.
 claims. With OIDC enabled, groups come from a verified JWT claim instead. Neither
 mechanism accepts groups in the request body.
 
+## Local ACL synchronization
+
+For an automatically refreshed local source, configure the manifest connector
+instead of `CONTEXT_BREACH_RAG_CORPUS_FILE`:
+
+```bash
+export CONTEXT_BREACH_RAG_ACL_MANIFEST_FILE=config/rag-acl-manifest.example.json
+export CONTEXT_BREACH_RAG_SOURCE_ROOT=config/rag-source-documents
+```
+
+The manifest is authoritative for every corpus it names. Each source document
+provides its tenant, stable document ID, content version, relative content path,
+classification, users/groups, and ACL version. The connector:
+
+1. resolves content only below the configured root and rejects absolute paths,
+   traversal, escaping symlinks, oversized files, invalid UTF-8, and empty files;
+2. derives deterministic chunks and copies the source ACL and versions onto every
+   chunk;
+3. constructs the complete replacement snapshot before atomically publishing it;
+4. increments the corpus revision and invalidates cached retrievals when content,
+   versions, or permissions change;
+5. excludes tombstoned or omitted documents from the new snapshot; and
+6. reloads before retrieval and fails closed if the authoritative manifest or any
+   referenced source file cannot be validated.
+
+The search cache is keyed by the exact authenticated tenant, user, agent, group
+set, query, corpus revision, and result limit. Before releasing content, retrieval
+rechecks the revision and retries once; a second concurrent change fails closed.
+This prevents a completed ACL refresh from leaving an old cached result accessible.
+
+To revoke a document, either remove it from the corpus's `documents` list or set
+`"deleted": true` and increase `acl_version`. To revoke a user or group, remove it
+from the manifest and increase `acl_version`. The next search observes the new
+snapshot without restarting the gateway.
+
 ## Local smoke run
 
 Use a secret of at least 32 bytes. The example identity is a member of `finance`,
@@ -92,8 +127,9 @@ The gateway translates this into a separate policy request for the
 ## Retrieval audits
 
 Each executed search appends a `gateway_rag_retrieval_records` row. The record
-contains the query SHA-256, returned document/chunk IDs, ACL versions, decision
-link, identity, and status. It excludes the raw query and chunk content.
+contains the query SHA-256, returned document IDs and versions, chunk IDs, ACL
+versions, decision link, identity, and status. It excludes the raw query and chunk
+content.
 
 `GET /v1/rag/retrievals/{retrieval_id}` requires a fresh `rag_retrieval`
 signature and returns a record only to the exact tenant/user/agent identity that
@@ -119,16 +155,17 @@ This implementation does **not** provide:
 
 - automatic OIDC discovery, interactive login, multi-issuer routing, or opaque
   access-token introspection;
-- live group resolution or source ACL synchronization;
-- SharePoint, Google Drive, Confluence, or filesystem connectors;
+- live identity-provider group resolution;
+- SharePoint, Google Drive, or Confluence connectors and their change feeds;
 - vector, hybrid, semantic, or reranker retrieval;
-- revocation-driven cache invalidation;
-- chunk derivation and ACL inheritance during ingestion;
+- scalable background ingestion, incremental indexing, or multi-source ownership
+  of one corpus—the local manifest connector rebuilds its complete snapshot;
 - semantic prompt-injection or DLP guarantees;
 - network isolation preventing direct access to the corpus;
 - authorization-aware generation or citation verification.
 
-The next production milestone is an ACL-sync connector whose revocation tests
-prove that permission changes reach every derived chunk and cache. Until that
-exists, the JSON corpus is a controlled security test fixture, not an enterprise
-document system.
+The local connector proves ACL inheritance, atomic replacement, tombstones,
+revocation, cache invalidation, path confinement, and fail-closed source errors.
+It is still a reference connector, not an enterprise content integration. The next
+production milestone is one real provider adapter—SharePoint or Google Drive—with
+incremental change tokens and revocation tests against the provider's actual ACLs.

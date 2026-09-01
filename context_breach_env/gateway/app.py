@@ -50,6 +50,10 @@ from context_breach_env.gateway.rag import (
     RAGCorpusRegistry,
     RAGRetrievalError,
 )
+from context_breach_env.gateway.rag_sync import (
+    LocalACLManifestConnector,
+    LocalManifestRAGCorpusRegistry,
+)
 from context_breach_env.gateway.stores import (
     GatewayStateError,
     GatewayStateStore,
@@ -159,6 +163,23 @@ def _mcp_downstreams_from_environment() -> MCPDownstreamRegistry:
 
 def _rag_corpora_from_environment() -> RAGCorpusRegistry:
     path = os.getenv("CONTEXT_BREACH_RAG_CORPUS_FILE")
+    manifest_path = os.getenv("CONTEXT_BREACH_RAG_ACL_MANIFEST_FILE")
+    source_root = os.getenv("CONTEXT_BREACH_RAG_SOURCE_ROOT")
+    if path and manifest_path:
+        raise ValueError(
+            "configure either CONTEXT_BREACH_RAG_CORPUS_FILE or "
+            "CONTEXT_BREACH_RAG_ACL_MANIFEST_FILE, not both"
+        )
+    if manifest_path:
+        root = source_root or str(os.path.dirname(os.path.abspath(manifest_path)))
+        return LocalManifestRAGCorpusRegistry(
+            LocalACLManifestConnector(manifest_path, root)
+        )
+    if source_root:
+        raise ValueError(
+            "CONTEXT_BREACH_RAG_SOURCE_ROOT requires "
+            "CONTEXT_BREACH_RAG_ACL_MANIFEST_FILE"
+        )
     if not path:
         return RAGCorpusRegistry()
     return RAGCorpusRegistry.from_file(path)

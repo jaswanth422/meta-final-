@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+import threading
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from context_breach_env.gateway.auth import AuthenticatedIdentity
 from context_breach_env.gateway.models import (
     AuthorizationDecision,
     AuthorizationRequest,
@@ -22,6 +25,9 @@ from context_breach_env.gateway.proxy import MCPResultScanner
 from context_breach_env.gateway.service import AuthorizationService
 from context_breach_env.gateway.stores import RetrievalAuditStore
 
+if TYPE_CHECKING:
+    from context_breach_env.gateway.auth import AuthenticatedIdentity
+
 
 TOKEN = re.compile(r"[A-Za-z0-9]+")
 
@@ -31,7 +37,7 @@ class RAGRetrievalError(RuntimeError):
 
 
 class RAGCorpusRegistry:
-    """Immutable, server-owned corpora with ACL metadata on every chunk."""
+    """Server-owned, atomically replaceable corpora with per-corpus revisions."""
 
     def __init__(self, corpora: RAGCorporaDocument | None = None) -> None:
         document = corpora or RAGCorporaDocument()
@@ -53,6 +59,9 @@ class RAGCorpusRegistry:
                 chunk.model_copy(deep=True) for chunk in corpus.chunks
             )
         self._corpora = resolved
+        self._revisions = {name: 1 for name in resolved}
+        self._lock = threading.RLock()
+        self._invalidators: list[Callable[[frozenset[str]], None]] = []
 
     @classmethod
     def from_file(cls, path: str | Path) -> RAGCorpusRegistry:
@@ -60,13 +69,69 @@ class RAGCorpusRegistry:
         return cls(RAGCorporaDocument.model_validate(payload))
 
     def chunks(self, corpus_name: str) -> tuple[RAGChunk, ...]:
-        chunks = self._corpora.get(corpus_name)
-        if chunks is None:
-            raise RAGRetrievalError("rag_corpus_unavailable")
-        return tuple(chunk.model_copy(deep=True) for chunk in chunks)
+        chunks, _ = self.chunks_with_revision(corpus_name)
+        return chunks
+
+    def chunks_with_revision(
+        self,
+        corpus_name: str,
+    ) -> tuple[tuple[RAGChunk, ...], int]:
+        """Return one coherent content/ACL snapshot and its revision."""
+        with self._lock:
+            chunks = self._corpora.get(corpus_name)
+            if chunks is None:
+                raise RAGRetrievalError("rag_corpus_unavailable")
+            revision = self._revisions[corpus_name]
+            return (
+                tuple(chunk.model_copy(deep=True) for chunk in chunks),
+                revision,
+            )
+
+    def revision(self, corpus_name: str) -> int:
+        with self._lock:
+            if corpus_name not in self._corpora:
+                raise RAGRetrievalError("rag_corpus_unavailable")
+            return self._revisions[corpus_name]
+
+    def register_invalidator(
+        self,
+        callback: Callable[[frozenset[str]], None],
+    ) -> None:
+        with self._lock:
+            self._invalidators.append(callback)
+
+    def replace_corpora(
+        self,
+        document: RAGCorporaDocument,
+        *,
+        replace_names: frozenset[str] | None = None,
+    ) -> frozenset[str]:
+        """Atomically replace authoritative corpora and invalidate their caches."""
+        incoming = RAGCorpusRegistry(document)
+        names = replace_names or frozenset(incoming._corpora)
+        if not set(incoming._corpora).issubset(names):
+            raise ValueError("replace_names must include every incoming corpus")
+
+        changed: set[str] = set()
+        with self._lock:
+            for name in names:
+                replacement = incoming._corpora.get(name, ())
+                if self._corpora.get(name) != replacement:
+                    self._corpora[name] = tuple(
+                        chunk.model_copy(deep=True) for chunk in replacement
+                    )
+                    self._revisions[name] = self._revisions.get(name, 0) + 1
+                    changed.add(name)
+            callbacks = tuple(self._invalidators)
+
+        changed_names = frozenset(changed)
+        if changed_names:
+            for callback in callbacks:
+                callback(changed_names)
+        return changed_names
 
 
-@dataclass(frozen=True)
+@dataclass
 class PermissionAwareRAGRetriever:
     """Filters by trusted identity and ACLs before performing lexical retrieval."""
 
@@ -74,6 +139,22 @@ class PermissionAwareRAGRetriever:
     corpora: RAGCorpusRegistry
     retrieval_store: RetrievalAuditStore
     result_scanner: MCPResultScanner
+    cache_max_entries: int = 1_024
+    _cache: OrderedDict[tuple[object, ...], tuple[tuple[float, RAGChunk], ...]] = field(
+        init=False,
+        default_factory=OrderedDict,
+        repr=False,
+    )
+    _cache_lock: threading.Lock = field(
+        init=False,
+        default_factory=threading.Lock,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        if self.cache_max_entries < 0:
+            raise ValueError("RAG cache size cannot be negative")
+        self.corpora.register_invalidator(self._invalidate_corpora)
 
     def search(
         self,
@@ -105,29 +186,7 @@ class PermissionAwareRAGRetriever:
                 status="not_executed",
             )
 
-        # ACL filtering deliberately happens before relevance scoring. Unauthorized
-        # content is never provided to the ranker or returned as result metadata.
-        permitted_chunks = [
-            chunk
-            for chunk in self.corpora.chunks(snapshot.corpus_name)
-            if chunk.tenant_id == identity.tenant_id
-            and _identity_can_read(chunk, identity)
-        ]
-        query_tokens = _tokens(snapshot.query)
-        ranked: list[tuple[float, RAGChunk]] = []
-        for chunk in permitted_chunks:
-            score = _lexical_score(query_tokens, _tokens(chunk.content))
-            if score > 0:
-                ranked.append((score, chunk))
-        ranked.sort(
-            key=lambda item: (
-                -item[0],
-                item[1].document_id,
-                item[1].document_version,
-                item[1].chunk_id,
-            )
-        )
-        selected = ranked[: snapshot.top_k]
+        selected, corpus_revision = self._select(snapshot, identity)
         hits = [
             RAGSearchHit(
                 document_id=chunk.document_id,
@@ -144,6 +203,26 @@ class PermissionAwareRAGRetriever:
         safe, reason = self.result_scanner.scan(
             [hit.model_dump(mode="json") for hit in hits]
         )
+        # A revocation may race an in-flight ranking or scan. Never release a result
+        # produced from a snapshot that was superseded before response release.
+        if self.corpora.revision(snapshot.corpus_name) != corpus_revision:
+            selected, corpus_revision = self._select(snapshot, identity)
+            hits = [
+                RAGSearchHit(
+                    document_id=chunk.document_id,
+                    document_version=chunk.document_version,
+                    chunk_id=chunk.chunk_id,
+                    content=chunk.content,
+                    classification=chunk.classification,
+                    relevance_score=score,
+                )
+                for score, chunk in selected
+            ]
+            safe, reason = self.result_scanner.scan(
+                [hit.model_dump(mode="json") for hit in hits]
+            )
+            if self.corpora.revision(snapshot.corpus_name) != corpus_revision:
+                raise RAGRetrievalError("rag_corpus_changed_during_retrieval")
         if not safe:
             self._record(
                 retrieval_id=retrieval_id,
@@ -173,6 +252,91 @@ class PermissionAwareRAGRetriever:
             results=hits,
         )
 
+    def _select(
+        self,
+        request: RAGSearchRequest,
+        identity: AuthenticatedIdentity,
+    ) -> tuple[list[tuple[float, RAGChunk]], int]:
+        chunks, revision = self.corpora.chunks_with_revision(request.corpus_name)
+        cache_key = (
+            request.corpus_name,
+            revision,
+            identity.tenant_id,
+            identity.user_id,
+            identity.agent_id,
+            tuple(sorted(identity.groups)),
+            request.query,
+            request.top_k,
+        )
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached, revision
+
+        # ACL filtering deliberately happens before relevance scoring. Unauthorized
+        # content is never provided to the ranker or returned as result metadata.
+        permitted_chunks = [
+            chunk
+            for chunk in chunks
+            if chunk.tenant_id == identity.tenant_id
+            and _identity_can_read(chunk, identity)
+        ]
+        query_tokens = _tokens(request.query)
+        ranked: list[tuple[float, RAGChunk]] = []
+        for chunk in permitted_chunks:
+            score = _lexical_score(query_tokens, _tokens(chunk.content))
+            if score > 0:
+                ranked.append((score, chunk))
+        ranked.sort(
+            key=lambda item: (
+                -item[0],
+                item[1].document_id,
+                item[1].document_version,
+                item[1].chunk_id,
+            )
+        )
+        selected = ranked[: request.top_k]
+        # Do not insert results from a snapshot invalidated during ranking.
+        if self.corpora.revision(request.corpus_name) == revision:
+            self._cache_put(cache_key, selected)
+        return selected, revision
+
+    def _cache_get(
+        self,
+        key: tuple[object, ...],
+    ) -> list[tuple[float, RAGChunk]] | None:
+        if self.cache_max_entries == 0:
+            return None
+        with self._cache_lock:
+            value = self._cache.get(key)
+            if value is None:
+                return None
+            self._cache.move_to_end(key)
+            return [(score, chunk.model_copy(deep=True)) for score, chunk in value]
+
+    def _cache_put(
+        self,
+        key: tuple[object, ...],
+        value: list[tuple[float, RAGChunk]],
+    ) -> None:
+        if self.cache_max_entries == 0:
+            return
+        copied = tuple(
+            (score, chunk.model_copy(deep=True)) for score, chunk in value
+        )
+        with self._cache_lock:
+            self._cache[key] = copied
+            self._cache.move_to_end(key)
+            while len(self._cache) > self.cache_max_entries:
+                self._cache.popitem(last=False)
+
+    def _invalidate_corpora(self, corpus_names: frozenset[str]) -> None:
+        with self._cache_lock:
+            stale_keys = [
+                key for key in self._cache if str(key[0]) in corpus_names
+            ]
+            for key in stale_keys:
+                del self._cache[key]
+
     def _record(
         self,
         *,
@@ -195,6 +359,9 @@ class PermissionAwareRAGRetriever:
                 query_sha256=hashlib.sha256(request.query.encode("utf-8")).hexdigest(),
                 status=status,
                 returned_document_ids=sorted({chunk.document_id for chunk in chunks}),
+                returned_document_versions=sorted(
+                    {chunk.document_version for chunk in chunks}
+                ),
                 returned_chunk_ids=[chunk.chunk_id for chunk in chunks],
                 acl_versions=sorted({chunk.acl_version for chunk in chunks}),
                 failure_reason=failure_reason,

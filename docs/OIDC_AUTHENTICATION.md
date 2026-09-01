@@ -129,6 +129,7 @@ deployment. It does not yet provide:
 
 Bearer tokens are reusable until expiry, unlike the one-time HMAC credentials.
 Use short access-token lifetimes, TLS, strict scopes, and the provider's
-revocation controls. The next milestone remains source-document ACL
-synchronization and revocation propagation through every derived RAG chunk and
-cache.
+revocation controls. Source-document ACL inheritance and cache revocation are now
+proved by the local manifest connector. The next milestone is a real SharePoint or
+Google Drive change-feed adapter that maps provider ACL changes into the same
+atomic corpus-revision boundary.

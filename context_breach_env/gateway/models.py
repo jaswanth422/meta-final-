@@ -210,6 +210,7 @@ class RAGRetrievalAuditRecord(BaseModel):
     query_sha256: str
     status: Literal["succeeded", "response_blocked"]
     returned_document_ids: list[str] = Field(default_factory=list)
+    returned_document_versions: list[str] = Field(default_factory=list)
     returned_chunk_ids: list[str] = Field(default_factory=list)
     acl_versions: list[str] = Field(default_factory=list)
     failure_reason: str | None = None

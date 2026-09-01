@@ -28,7 +28,10 @@
       signed search, result scanning, and durable retrieval audits.
 - [x] Add single-issuer RS256/JWKS access-token verification, trusted group claims,
       endpoint scopes, and HMAC compatibility.
-- [ ] Replace JSON corpora with source ACL synchronization, revocation handling,
+- [x] Add a confined local-filesystem ACL manifest connector with deterministic
+      chunk inheritance, atomic snapshot refresh, tombstones, revision-aware cache
+      invalidation, and fail-closed revocation tests.
+- [ ] Add a real SharePoint or Google Drive incremental ACL/change-feed connector
       and a private vector index; add multi-issuer/workload identity as required.
 - [ ] Add deployment network isolation, full MCP transports, and workload identity
       propagation so direct downstream bypass is impossible.
