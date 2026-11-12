@@ -29,7 +29,7 @@ def _required_environment() -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Send a signed authorization gateway smoke request")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8091")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8081")
     parser.add_argument("--mode", choices=("permit", "deny"), default="permit")
     args = parser.parse_args()
 
